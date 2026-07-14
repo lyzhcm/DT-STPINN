@@ -14,7 +14,7 @@ from src.loss import DTSTPINNLoss
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device} ({torch.cuda.get_device_name(0)})" if device.type == "cuda" else f"Device: {device}")
-    print(f"VRAM total: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB" if device.type == "cuda" else "")
+    print(f"VRAM total: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB" if device.type == "cuda" else "")
 
     config = Config.from_yaml("configs/paper1.yaml")
 
