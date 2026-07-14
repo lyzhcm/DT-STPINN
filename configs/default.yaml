@@ -1,0 +1,74 @@
+# DT-STPINN Default Configuration
+
+model:
+  name: "DT-STPINN"
+  node_feature_dim: 24
+  edge_feature_dim: 8
+  hidden_dim: 256
+
+  # Spatial Encoder (GATv2)
+  spatial:
+    gnn_type: "GATv2Conv"
+    num_layers: 2
+    heads: 8
+    dropout: 0.1
+
+  # Temporal Encoder (Transformer)
+  temporal:
+    num_layers: 4
+    heads: 8
+    ff_dim: 1024
+    dropout: 0.1
+    max_seq_len: 64
+
+  # Cross Fusion
+  fusion:
+    type: "cross_attention"  # cross_attention | concat
+    heads: 8
+
+  # Decoder Heads
+  decoder:
+    temperature: true
+    stress: true
+    displacement: true
+    heat_flux: true
+
+# Physics Constraints
+physics:
+  pde_heat_conduction: true
+  pde_fourier_flux: true
+  pde_mechanical: true
+  energy_conservation: true
+  boundary_conditions: true
+
+# Loss Weights
+loss:
+  lambda_T: 1.0
+  lambda_PDE: 0.1
+  lambda_sigma: 0.5
+  lambda_u: 0.5
+  lambda_energy: 0.05
+  lambda_BC: 0.1
+  lambda_smooth: 0.01
+
+# Training
+training:
+  batch_size: 16
+  epochs: 500
+  lr: 1.0e-3
+  lr_scheduler: "cosine"
+  weight_decay: 1.0e-5
+  grad_clip: 1.0
+
+# Data
+data:
+  time_sampling: "log"  # log | uniform | adaptive
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+
+# Logging
+logging:
+  log_dir: "logs"
+  save_every: 50
+  eval_every: 10
