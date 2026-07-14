@@ -1,15 +1,17 @@
 """Training loop for DT-STPINN.
 
 Handles train/validation loops, checkpointing, logging to TensorBoard,
-learning rate scheduling, and early stopping.
+learning rate scheduling, early stopping, and AMP mixed precision.
 """
 from __future__ import annotations
 
+import gc
 import time
 from pathlib import Path
 
 import torch
 import torch.nn as nn
+from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
@@ -46,6 +48,8 @@ class Trainer:
         self.grad_clip = config.training.grad_clip
         self.accumulate_grad = config.training.accumulate_grad_batches
         self.early_stopping_patience = config.training.early_stopping_patience
+        self.use_amp = getattr(config.training, "use_amp", True)
+        self.scaler = GradScaler(enabled=self.use_amp)
 
         self.best_val_loss = float("inf")
         self.best_epoch = 0
@@ -91,24 +95,29 @@ class Trainer:
             if is_initial_step:
                 is_initial = mask.bool() if mask is not None else None
 
-            total, components = self.loss_fn.forward(
-                pred=T_pred, target=target, prev_temp=prev_temp,
-                coords=coords, edge_index=edge_index, boundary=boundary,
-                dt=dt, laser_pos=laser_pos, mask=mask,
-                is_initial=is_initial,
-            )
+            with autocast(enabled=self.use_amp):
+                total, components = self.loss_fn.forward(
+                    pred=T_pred, target=target, prev_temp=prev_temp,
+                    coords=coords, edge_index=edge_index, boundary=boundary,
+                    dt=dt, laser_pos=laser_pos, mask=mask,
+                    is_initial=is_initial,
+                )
 
             loss = total / self.accumulate_grad
-            loss.backward()
+            self.scaler.scale(loss).backward()
 
             if (batch_idx + 1) % self.accumulate_grad == 0:
                 if self.grad_clip > 0:
+                    self.scaler.unscale_(self.optimizer)
                     torch.nn.utils.clip_grad_norm_(
                         self.model.parameters(), self.grad_clip
                     )
-                self.optimizer.step()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
                 self.optimizer.zero_grad()
                 self.global_step += 1
+                if self.device.type == "cuda":
+                    torch.cuda.empty_cache()
 
             total_loss += total.item()
             for k, v in components.items():

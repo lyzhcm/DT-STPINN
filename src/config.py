@@ -95,6 +95,7 @@ class TrainingConfig:
     weight_decay: float = 1e-5
     grad_clip: float = 1.0
     early_stopping_patience: int = 50
+    use_amp: bool = True
 
 
 @dataclass
