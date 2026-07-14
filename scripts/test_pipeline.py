@@ -4,6 +4,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import torch
+# Use memory-efficient attention instead of flash attention (better for large batch)
+torch.backends.cuda.enable_mem_efficient_sdp(True)
+torch.backends.cuda.enable_flash_sdp(False)
 from src.config import Config
 from src.data.vtu_loader import VTULoader
 from src.graph_builder.dynamic_graph import DynamicGraph
@@ -54,7 +57,7 @@ def main():
         torch.cuda.empty_cache()
 
     t0 = time.time()
-    with torch.cuda.amp.autocast(enabled=True) if device.type == "cuda" else torch.no_grad():
+    with torch.amp.autocast("cuda", enabled=True) if device.type == "cuda" else torch.no_grad():
         out = model(seq)
     elapsed = time.time() - t0
 
@@ -67,7 +70,7 @@ def main():
     T_pred = out["T_pred"]
     print(f"  T_pred shape: {tuple(T_pred.shape)}")
 
-    with torch.cuda.amp.autocast(enabled=(device.type == "cuda")):
+    with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
         total, comps = loss_fn.forward(
             pred=T_pred, target=seq[-1].y, prev_temp=seq[-2].y if len(seq) > 1 else seq[-1].y,
             coords=seq[-1].coords, edge_index=seq[-1].edge_index,

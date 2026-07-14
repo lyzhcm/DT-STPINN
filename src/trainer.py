@@ -11,12 +11,15 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from .loss import DTSTPINNLoss
 from .utils.metrics import compute_metrics
+
+torch.backends.cuda.enable_mem_efficient_sdp(True)
+torch.backends.cuda.enable_flash_sdp(False)
 
 
 class Trainer:
@@ -95,7 +98,7 @@ class Trainer:
             if is_initial_step:
                 is_initial = mask.bool() if mask is not None else None
 
-            with autocast(enabled=self.use_amp):
+            with autocast("cuda", enabled=self.use_amp):
                 total, components = self.loss_fn.forward(
                     pred=T_pred, target=target, prev_temp=prev_temp,
                     coords=coords, edge_index=edge_index, boundary=boundary,
