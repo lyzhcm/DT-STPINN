@@ -73,13 +73,16 @@ class DTSTPINN(nn.Module):
 
         for data in graph_sequence:
             z_s = self.spatial_encoder(data)
-            spatial_features.append(z_s)
+            spatial_features.append(z_s.detach() if not self.training else z_s)
             mask = getattr(data, "mask", torch.ones(z_s.shape[0], dtype=torch.bool,
                                                      device=z_s.device))
             masks.append(mask)
 
-        z_s = torch.stack(spatial_features, dim=0).unsqueeze(0)
+        z_s = torch.stack([f for f in spatial_features], dim=0).unsqueeze(0)
         mask_stack = torch.stack(masks, dim=0).unsqueeze(0)
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         z_t = self.temporal_encoder(z_s, mask_stack)
 

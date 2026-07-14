@@ -49,7 +49,16 @@ class DTSTPINNLoss:
                 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         losses = {}
 
+        if pred.dim() == 3 and pred.shape[0] == 1:
+            pred = pred.squeeze(0)
+        if target.dim() == 3 and target.shape[0] == 1:
+            target = target.squeeze(0)
+        if prev_temp.dim() == 3 and prev_temp.shape[0] == 1:
+            prev_temp = prev_temp.squeeze(0)
+
         mask_bool = mask.bool() if mask is not None else None
+        if mask_bool is not None and mask_bool.dim() == 2 and mask_bool.shape[0] == 1:
+            mask_bool = mask_bool.squeeze(0)
 
         T_pred = pred.squeeze(-1)
         T_target = target.squeeze(-1)

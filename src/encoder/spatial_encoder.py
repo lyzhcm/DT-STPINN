@@ -15,7 +15,7 @@ from torch_geometric.nn import GATv2Conv
 class SpatialEncoder(nn.Module):
     def __init__(self, in_dim: int, hidden_dim: int, num_layers: int = 2,
                  heads: int = 4, edge_dim: int = 5, dropout: float = 0.1,
-                 use_checkpoint: bool = True):
+                 use_checkpoint: bool = True, edge_embed_dim: int = 32):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.out_dim = hidden_dim * heads
@@ -27,7 +27,7 @@ class SpatialEncoder(nn.Module):
         self.input_norm = nn.LayerNorm(hidden_dim)
 
         self.edge_proj = nn.Sequential(
-            nn.Linear(edge_dim, hidden_dim),
+            nn.Linear(edge_dim, edge_embed_dim),
             nn.GELU(),
         )
 
@@ -38,7 +38,7 @@ class SpatialEncoder(nn.Module):
             in_c = hidden_dim if i == 0 else hidden_dim * heads
             out_c = hidden_dim
             self.convs.append(
-                GATv2Conv(in_c, out_c, heads=heads, edge_dim=hidden_dim,
+                GATv2Conv(in_c, out_c, heads=heads, edge_dim=edge_embed_dim,
                           dropout=dropout, concat=True)
             )
             self.norms.append(nn.LayerNorm(hidden_dim * heads))

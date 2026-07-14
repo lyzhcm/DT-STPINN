@@ -3,7 +3,7 @@
 model:
   node_feature_dim: 12
   edge_feature_dim: 5
-  hidden_dim: 256
+  hidden_dim: 128
   spatial:
     gnn_type: "GATv2Conv"
     num_layers: 2
