@@ -35,6 +35,7 @@ def main():
 
     print("\n[3/4] Building model...")
     model = DTSTPINN(config, config.material).to(device)
+    model.eval()
     loss_fn = DTSTPINNLoss(config, config.material)
     params = sum(p.numel() for p in model.parameters()) / 1e6
     print(f"  Params: {params:.2f}M")
@@ -57,7 +58,7 @@ def main():
         torch.cuda.empty_cache()
 
     t0 = time.time()
-    with torch.amp.autocast("cuda", enabled=True) if device.type == "cuda" else torch.no_grad():
+    with torch.no_grad(), torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
         out = model(seq)
     elapsed = time.time() - t0
 
@@ -70,7 +71,7 @@ def main():
     T_pred = out["T_pred"]
     print(f"  T_pred shape: {tuple(T_pred.shape)}")
 
-    with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
+    with torch.no_grad(), torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
         total, comps = loss_fn.forward(
             pred=T_pred, target=seq[-1].y, prev_temp=seq[-2].y if len(seq) > 1 else seq[-1].y,
             coords=seq[-1].coords, edge_index=seq[-1].edge_index,

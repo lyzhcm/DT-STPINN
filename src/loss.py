@@ -49,16 +49,10 @@ class DTSTPINNLoss:
                 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         losses = {}
 
-        if pred.dim() == 3 and pred.shape[0] == 1:
-            pred = pred.squeeze(0)
-        if target.dim() == 3 and target.shape[0] == 1:
-            target = target.squeeze(0)
-        if prev_temp.dim() == 3 and prev_temp.shape[0] == 1:
-            prev_temp = prev_temp.squeeze(0)
-
-        mask_bool = mask.bool() if mask is not None else None
-        if mask_bool is not None and mask_bool.dim() == 2 and mask_bool.shape[0] == 1:
-            mask_bool = mask_bool.squeeze(0)
+        pred = self._as_node_field(pred, "pred")
+        target = self._as_node_field(target, "target")
+        prev_temp = self._as_node_field(prev_temp, "prev_temp") if prev_temp is not None else None
+        mask_bool = self._as_node_mask(mask)
 
         T_pred = pred.squeeze(-1)
         T_target = target.squeeze(-1)
@@ -90,8 +84,40 @@ class DTSTPINNLoss:
 
         if self.lambda_smooth > 0:
             losses["Smooth"] = self.lambda_smooth * graph_smoothness_loss(
-                pred, edge_index
+                pred, edge_index, mask_bool
             )
 
         total = sum(losses.values())
         return total, losses
+
+    @staticmethod
+    def _as_node_field(x: torch.Tensor, name: str) -> torch.Tensor:
+        """Normalize scalar node fields to [N, C].
+
+        The model may return [1, N, C] for a single graph batch, while graph
+        labels are usually stored as [N, C]. Keeping one convention inside the
+        loss prevents mask/indexing mismatches.
+        """
+        if x.dim() == 3 and x.shape[0] == 1:
+            x = x.squeeze(0)
+        if x.dim() == 1:
+            x = x.unsqueeze(-1)
+        if x.dim() != 2:
+            raise ValueError(
+                f"{name} must have shape [N], [N, C], or [1, N, C]; "
+                f"got {tuple(x.shape)}"
+            )
+        return x
+
+    @staticmethod
+    def _as_node_mask(mask: torch.Tensor | None) -> torch.Tensor | None:
+        if mask is None:
+            return None
+        mask = mask.bool()
+        if mask.dim() == 2 and mask.shape[0] == 1:
+            mask = mask.squeeze(0)
+        if mask.dim() != 1:
+            raise ValueError(
+                f"mask must have shape [N] or [1, N]; got {tuple(mask.shape)}"
+            )
+        return mask

@@ -43,6 +43,8 @@ class BoundaryConditionLoss:
         grad_T = spatial_gradient(T.squeeze(-1), coords, edge_index)
 
         bdry_nodes = boundary.abs() > 1e-6
+        if mask is not None:
+            bdry_nodes = bdry_nodes & mask
         if not bdry_nodes.any():
             return torch.tensor(0.0, device=T.device, dtype=T.dtype)
 

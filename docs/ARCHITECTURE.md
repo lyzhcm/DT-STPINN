@@ -1,5 +1,9 @@
 # DT-STPINN: Architecture Document
 
+> Note: this legacy document has encoding damage in the current checkout.
+> The maintained Paper 1 architecture that matches the current code is
+> `docs/ARCHITECTURE_PAPER1.md`.
+
 > **Dynamic Twin Spatio-Temporal Physics-informed Neural Network**
 >
 > *面向 DED 薄壁件热-力耦合数字孪生的动态图时空物理信息网络*

@@ -3,6 +3,8 @@
 Encodes spatial physical interactions (heat conduction) across the
 computational mesh using attention mechanisms with edge features.
 Supports gradient checkpointing for memory efficiency on large graphs.
+Multi-head GAT outputs are averaged (`concat=False`) so downstream modules keep
+the configured hidden dimension instead of hidden_dim * heads.
 """
 from __future__ import annotations
 
@@ -18,7 +20,7 @@ class SpatialEncoder(nn.Module):
                  use_checkpoint: bool = True, edge_embed_dim: int = 32):
         super().__init__()
         self.hidden_dim = hidden_dim
-        self.out_dim = hidden_dim * heads
+        self.out_dim = hidden_dim
         self.num_layers = num_layers
         self.heads = heads
         self.use_checkpoint = use_checkpoint
@@ -35,13 +37,13 @@ class SpatialEncoder(nn.Module):
         self.norms = nn.ModuleList()
 
         for i in range(num_layers):
-            in_c = hidden_dim if i == 0 else hidden_dim * heads
+            in_c = hidden_dim
             out_c = hidden_dim
             self.convs.append(
                 GATv2Conv(in_c, out_c, heads=heads, edge_dim=edge_embed_dim,
-                          dropout=dropout, concat=True)
+                          dropout=dropout, concat=False)
             )
-            self.norms.append(nn.LayerNorm(hidden_dim * heads))
+            self.norms.append(nn.LayerNorm(hidden_dim))
 
         self.activation = nn.GELU()
         self.dropout = nn.Dropout(dropout)

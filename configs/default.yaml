@@ -1,74 +1,84 @@
-# DT-STPINN Default Configuration
+# DT-STPINN default configuration.
+#
+# This default follows the current Paper 1 implementation: temperature-field
+# prediction on a masked dynamic graph. Multi-physics decoder heads are left for
+# later paper stages.
 
 model:
-  name: "DT-STPINN"
-  node_feature_dim: 24
-  edge_feature_dim: 8
+  node_feature_dim: 12
+  edge_feature_dim: 5
   hidden_dim: 256
-
-  # Spatial Encoder (GATv2)
   spatial:
     gnn_type: "GATv2Conv"
     num_layers: 2
-    heads: 8
+    heads: 4
     dropout: 0.1
-
-  # Temporal Encoder (Transformer)
   temporal:
     num_layers: 4
     heads: 8
     ff_dim: 1024
     dropout: 0.1
     max_seq_len: 64
-
-  # Cross Fusion
   fusion:
-    type: "cross_attention"  # cross_attention | concat
+    type: "cross_attention"
     heads: 8
-
-  # Decoder Heads
   decoder:
     temperature: true
-    stress: true
-    displacement: true
-    heat_flux: true
+    stress: false
+    displacement: false
+    heat_flux: false
 
-# Physics Constraints
+material:
+  name: "Ti-6Al-4V"
+  density: 4430.0
+  specific_heat: 526.3
+  thermal_conductivity: 6.7
+  thermal_expansion: 8.6e-6
+  solidus_temp: 1878.0
+  liquidus_temp: 1928.0
+  emissivity: 0.35
+  convection_coeff: 10.0
+  ambient_temp: 293.15
+
 physics:
-  pde_heat_conduction: true
-  pde_fourier_flux: true
-  pde_mechanical: true
-  energy_conservation: true
-  boundary_conditions: true
+  heat_conduction: true
+  fourier_flux: false
+  boundary_convection: true
+  boundary_radiation: false
+  initial_condition: true
 
-# Loss Weights
 loss:
   lambda_T: 1.0
   lambda_PDE: 0.1
-  lambda_sigma: 0.5
-  lambda_u: 0.5
-  lambda_energy: 0.05
   lambda_BC: 0.1
+  lambda_IC: 0.5
   lambda_smooth: 0.01
 
-# Training
 training:
-  batch_size: 16
+  batch_size: 1
+  accumulate_grad_batches: 8
   epochs: 500
   lr: 1.0e-3
   lr_scheduler: "cosine"
   weight_decay: 1.0e-5
   grad_clip: 1.0
+  early_stopping_patience: 50
+  use_amp: true
 
-# Data
 data:
-  time_sampling: "log"  # log | uniform | adaptive
+  vtu_dir: "data/raw"
+  time_sampling: "log"
+  window_size: 8
+  predict_steps: 1
+  k_neighbors: 16
+  use_mesh_edges: true
   train_split: 0.7
   val_split: 0.15
   test_split: 0.15
 
-# Logging
 logging:
   log_dir: "logs"
+  experiment_name: "paper1_temperature"
   save_every: 50
   eval_every: 10
+  use_wandb: false

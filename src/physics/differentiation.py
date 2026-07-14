@@ -91,7 +91,8 @@ def divergence(vector_field: torch.Tensor, coords: torch.Tensor,
 
 
 def graph_smoothness_loss(node_values: torch.Tensor,
-                          edge_index: torch.Tensor) -> torch.Tensor:
+                          edge_index: torch.Tensor,
+                          mask: torch.Tensor | None = None) -> torch.Tensor:
     """Graph Laplacian smoothness regularization.
 
     L_smooth = (1/M) * Σ_{ij} A_ij * (f_i - f_j)²
@@ -99,11 +100,17 @@ def graph_smoothness_loss(node_values: torch.Tensor,
     Args:
         node_values: [N] or [N, 1] field to regularize.
         edge_index: [2, M] graph connectivity.
+        mask: optional [N] active-node mask. Only active-active edges are used.
 
     Returns:
         scalar smoothness loss.
     """
     f = node_values.view(-1)
     row, col = edge_index[0], edge_index[1]
+    if mask is not None:
+        active_edges = mask[row] & mask[col]
+        row, col = row[active_edges], col[active_edges]
+        if row.numel() == 0:
+            return torch.tensor(0.0, device=node_values.device, dtype=node_values.dtype)
     loss = ((f[row] - f[col]) ** 2).mean()
     return loss

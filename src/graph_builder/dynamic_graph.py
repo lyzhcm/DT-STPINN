@@ -119,6 +119,9 @@ class DynamicGraph:
             y=T_raw.view(-1, 1),
             mask=mask.bool(),
             coords=coords_norm,
+            boundary=self.boundary.clone(),
+            laser_pos=laser_pos,
+            dt=dt,
             time=time_val,
             step=t,
         )
