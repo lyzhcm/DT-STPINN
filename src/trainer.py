@@ -14,6 +14,7 @@ import torch.nn as nn
 from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from tqdm.auto import tqdm
 
 from .loss import DTSTPINNLoss
 from .utils.metrics import compute_metrics
@@ -59,13 +60,26 @@ class Trainer:
         self.epochs_no_improve = 0
         self.global_step = 0
 
-    def train_epoch(self, train_loader: DataLoader, epoch: int) -> dict:
+    def train_epoch(self, train_loader: DataLoader, epoch: int,
+                    total_epochs: int | None = None) -> dict:
         self.model.train()
         total_loss = 0.0
         loss_components = {}
         self.optimizer.zero_grad()
 
-        for batch_idx, batch in enumerate(train_loader):
+        desc = f"Train epoch {epoch}"
+        if total_epochs is not None:
+            desc = f"Train epoch {epoch}/{total_epochs}"
+
+        progress = tqdm(
+            enumerate(train_loader),
+            total=len(train_loader),
+            desc=desc,
+            dynamic_ncols=True,
+            leave=False,
+        )
+
+        for batch_idx, batch in progress:
             batch = self._to_device(batch)
 
             graph_seq = batch["graph_sequence"]
@@ -126,6 +140,18 @@ class Trainer:
             for k, v in components.items():
                 loss_components[k] = loss_components.get(k, 0.0) + v.item()
 
+            running_loss = total_loss / (batch_idx + 1)
+            postfix = {
+                "loss": f"{total.item():.3e}",
+                "avg": f"{running_loss:.3e}",
+                "lr": f"{self.optimizer.param_groups[0]['lr']:.2e}",
+            }
+            if "T" in components:
+                postfix["T"] = f"{components['T'].item():.3e}"
+            if "PDE" in components:
+                postfix["PDE"] = f"{components['PDE'].item():.3e}"
+            progress.set_postfix(postfix)
+
         num_batches = len(train_loader)
         avg_loss = total_loss / num_batches
         for k in loss_components:
@@ -134,12 +160,22 @@ class Trainer:
         return {"loss": avg_loss, **loss_components}
 
     @torch.no_grad()
-    def validate_epoch(self, val_loader: DataLoader) -> dict:
+    def validate_epoch(self, val_loader: DataLoader,
+                       epoch: int | None = None) -> dict:
         self.model.eval()
         total_loss = 0.0
         all_preds, all_targets = [], []
 
-        for batch in val_loader:
+        desc = "Validate" if epoch is None else f"Validate epoch {epoch}"
+        progress = tqdm(
+            val_loader,
+            total=len(val_loader),
+            desc=desc,
+            dynamic_ncols=True,
+            leave=False,
+        )
+
+        for batch_idx, batch in enumerate(progress):
             batch = self._to_device(batch)
             graph_seq = batch["graph_sequence"]
             if isinstance(graph_seq, list) and len(graph_seq) > 0 and isinstance(graph_seq[0], list):
@@ -168,6 +204,10 @@ class Trainer:
                 dt=dt, laser_pos=laser_pos, mask=mask,
             )
             total_loss += total.item()
+            progress.set_postfix({
+                "loss": f"{total.item():.3e}",
+                "avg": f"{total_loss / (batch_idx + 1):.3e}",
+            })
 
             all_preds.append(T_pred.detach().cpu())
             all_targets.append(target.detach().cpu())
@@ -190,7 +230,7 @@ class Trainer:
 
         for epoch in range(1, epochs + 1):
             t0 = time.time()
-            train_metrics = self.train_epoch(train_loader, epoch)
+            train_metrics = self.train_epoch(train_loader, epoch, total_epochs=epochs)
             train_time = time.time() - t0
 
             self._log_metrics(train_metrics, epoch, prefix="train")
@@ -200,7 +240,7 @@ class Trainer:
             self.writer.add_scalar("train/lr", lr, epoch)
 
             if epoch % self.eval_every == 0:
-                val_metrics = self.validate_epoch(val_loader)
+                val_metrics = self.validate_epoch(val_loader, epoch=epoch)
                 self._log_metrics(val_metrics, epoch, prefix="val")
 
                 val_loss = val_metrics["val_loss"]
@@ -282,7 +322,17 @@ class Trainer:
 
     def _to_device_data(self, data):
         data = data.clone()
-        for attr in ["x", "y", "edge_index", "edge_attr", "mask", "coords"]:
+        tensor_attrs = [
+            "x",
+            "y",
+            "edge_index",
+            "edge_attr",
+            "mask",
+            "coords",
+            "boundary",
+            "laser_pos",
+        ]
+        for attr in tensor_attrs:
             val = getattr(data, attr, None)
             if isinstance(val, torch.Tensor):
                 setattr(data, attr, val.to(self.device))

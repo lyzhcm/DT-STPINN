@@ -30,8 +30,13 @@ def goldak_heat_source(coords: torch.Tensor, laser_pos: torch.Tensor,
     Returns:
         [N] volumetric heat generation at each node.
     """
-    cos_t = float(torch.cos(torch.tensor(scan_dir)))
-    sin_t = float(torch.sin(torch.tensor(scan_dir)))
+    laser_pos = laser_pos.to(device=coords.device, dtype=coords.dtype)
+    pi = coords.new_tensor(torch.pi)
+    sqrt3 = coords.new_tensor(3.0).sqrt()
+    sqrt_pi = pi.sqrt()
+
+    cos_t = float(torch.cos(coords.new_tensor(scan_dir)))
+    sin_t = float(torch.sin(coords.new_tensor(scan_dir)))
 
     dx = coords[:, 0] - laser_pos[0]
     dy = coords[:, 1] - laser_pos[1]
@@ -44,8 +49,8 @@ def goldak_heat_source(coords: torch.Tensor, laser_pos: torch.Tensor,
     f_f = 2.0 * a_f / (a_f + a_r)
     f_r = 2.0 * a_r / (a_f + a_r)
 
-    coeff_f = 6 * torch.tensor(3.0).sqrt() * f_f * Q / (a_f * b * c * torch.pi * torch.tensor(torch.pi).sqrt())
-    coeff_r = 6 * torch.tensor(3.0).sqrt() * f_r * Q / (a_r * b * c * torch.pi * torch.tensor(torch.pi).sqrt())
+    coeff_f = 6 * sqrt3 * f_f * Q / (a_f * b * c * pi * sqrt_pi)
+    coeff_r = 6 * sqrt3 * f_r * Q / (a_r * b * c * pi * sqrt_pi)
 
     exp_arg_f = -3 * (x_local ** 2) / (a_f ** 2) - 3 * (y_local ** 2) / (b ** 2) - 3 * (dz ** 2) / (c ** 2)
     exp_arg_r = -3 * (x_local ** 2) / (a_r ** 2) - 3 * (y_local ** 2) / (b ** 2) - 3 * (dz ** 2) / (c ** 2)
@@ -73,6 +78,8 @@ def gaussian_heat_source(coords: torch.Tensor, laser_pos: torch.Tensor,
     Returns:
         [N] volumetric heat generation at each node.
     """
+    laser_pos = laser_pos.to(device=coords.device, dtype=coords.dtype)
+    pi = coords.new_tensor(torch.pi)
     Q = power * efficiency
     dr = coords[:, :2] - laser_pos[:2]
     dz = coords[:, 2] - laser_pos[2]
@@ -80,7 +87,7 @@ def gaussian_heat_source(coords: torch.Tensor, laser_pos: torch.Tensor,
     r_sq = (dr ** 2).sum(dim=1)
     z_sq = dz ** 2
 
-    coeff = 2 * Q / (torch.pi * radius ** 2 * depth * torch.tensor(torch.pi).sqrt())
+    coeff = 2 * Q / (pi * radius ** 2 * depth * pi.sqrt())
 
     q = coeff * torch.exp(-2 * r_sq / radius ** 2) * torch.exp(-z_sq / depth ** 2)
     return q

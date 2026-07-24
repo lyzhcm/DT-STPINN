@@ -18,6 +18,8 @@ from .edge_features import EdgeFeatureBuilder
 
 
 class DynamicGraph:
+    CACHE_VERSION = 1
+
     def __init__(self, vtu_data_list: list, material_props,
                  k_neighbors: int = 16, use_mesh_edges: bool = True):
         ref = vtu_data_list[-1]
@@ -132,3 +134,52 @@ class DynamicGraph:
     def to(self, device: torch.device) -> "DynamicGraph":
         self.device = device
         return self
+
+    def to_cache_dict(self) -> dict:
+        """Serialize preprocessed graph tensors for fast reload."""
+        return {
+            "cache_version": self.CACHE_VERSION,
+            "num_nodes": self.num_nodes,
+            "num_steps": self.num_steps,
+            "coords": self.coords.cpu(),
+            "times": self.times.cpu(),
+            "temperatures": self.temperatures.cpu(),
+            "live": self.live.cpu(),
+            "boundary": self.boundary.cpu(),
+            "layer_ids": self.layer_ids.cpu(),
+            "edge_index": self.edge_index.cpu(),
+            "edge_attr": self.edge_attr.cpu(),
+            "node_k": self.node_k.cpu(),
+            "laser_positions": self._laser_positions.cpu(),
+            "scan_directions": self._scan_directions.cpu(),
+        }
+
+    @classmethod
+    def from_cache_dict(cls, state: dict, material_props) -> "DynamicGraph":
+        version = state.get("cache_version")
+        if version != cls.CACHE_VERSION:
+            raise ValueError(
+                f"Unsupported DynamicGraph cache version {version}; "
+                f"expected {cls.CACHE_VERSION}."
+            )
+
+        graph = cls.__new__(cls)
+        graph.num_nodes = int(state["num_nodes"])
+        graph.num_steps = int(state["num_steps"])
+        graph.device = torch.device("cpu")
+
+        graph.coords = state["coords"].cpu()
+        graph.times = state["times"].cpu()
+        graph.temperatures = state["temperatures"].cpu()
+        graph.live = state["live"].cpu()
+        graph.boundary = state["boundary"].cpu()
+        graph.layer_ids = state["layer_ids"].cpu()
+        graph.edge_index = state["edge_index"].cpu().to(torch.long)
+        graph.edge_attr = state["edge_attr"].cpu()
+        graph.node_k = state["node_k"].cpu()
+        graph._laser_positions = state["laser_positions"].cpu()
+        graph._scan_directions = state["scan_directions"].cpu()
+
+        graph.node_feature_builder = NodeFeatureBuilder(material_props)
+        graph.edge_feature_builder = EdgeFeatureBuilder(material_props)
+        return graph

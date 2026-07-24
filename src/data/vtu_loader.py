@@ -51,6 +51,10 @@ class VTULoader:
     def num_steps(self) -> int:
         return len(self._files)
 
+    @property
+    def files(self) -> list[Path]:
+        return list(self._files)
+
     def parse_single(self, filepath: Path) -> VTUData:
         mesh = meshio.read(str(filepath))
 
@@ -112,11 +116,28 @@ class VTULoader:
             cells=cells,
         )
 
-    def parse_sequence(self, verbose: bool = True) -> list[VTUData]:
+    def parse_sequence(
+        self,
+        verbose: bool = True,
+        max_steps: int | None = None,
+        stride: int = 1,
+        start: int = 0,
+    ) -> list[VTUData]:
+        if stride < 1:
+            raise ValueError(f"stride must be >= 1, got {stride}")
+        if start < 0:
+            raise ValueError(f"start must be >= 0, got {start}")
+
+        files = self._files[start::stride]
+        if max_steps is not None:
+            if max_steps < 1:
+                raise ValueError(f"max_steps must be >= 1, got {max_steps}")
+            files = files[:max_steps]
+
         results = []
-        for i, fp in enumerate(self._files):
-            if verbose and (i == 0 or i == len(self._files) - 1 or i % 50 == 0):
-                print(f"  Parsing {i+1}/{len(self._files)}: {fp.name}")
+        for i, fp in enumerate(files):
+            if verbose and (i == 0 or i == len(files) - 1 or i % 50 == 0):
+                print(f"  Parsing {i+1}/{len(files)}: {fp.name}")
             results.append(self.parse_single(fp))
         if verbose:
             print(f"  Loaded {len(results)} time steps.")
