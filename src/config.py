@@ -31,6 +31,7 @@ class SpatialConfig:
     num_layers: int = 2
     heads: int = 8
     dropout: float = 0.1
+    use_checkpoint: bool = False
 
 
 @dataclass
@@ -74,6 +75,12 @@ class PhysicsConfig:
     boundary_convection: bool = True
     boundary_radiation: bool = True
     initial_condition: bool = True
+    coordinate_scale_to_m: float = 1.0e-3
+    time_scale_to_s: float = 1.0e-3
+    normalize_pde_residual: bool = True
+    pde_temperature_scale: float = 1000.0
+    pde_time_scale: float = 1.0
+    boundary_label_mode: str = "positive_dirichlet"
 
 
 @dataclass
@@ -83,6 +90,11 @@ class LossConfig:
     lambda_BC: float = 0.1
     lambda_IC: float = 0.5
     lambda_smooth: float = 0.01
+    # Hotspot re-weighting — penalises under-prediction in the melt pool.
+    lambda_hot: float = 0.0          # 0.0 → hotspot term disabled.
+    hot_threshold: float = 500.0     # °C, lower bound for weighting ramp.
+    hot_weight: float = 5.0          # peak additive weight at liquidus.
+    hot_weight_power: float = 2.0    # exponent on the temperature ratio.
 
 
 @dataclass
@@ -96,6 +108,7 @@ class TrainingConfig:
     grad_clip: float = 1.0
     early_stopping_patience: int = 50
     use_amp: bool = True
+    amp_dtype: str = "auto"
 
 
 @dataclass
@@ -109,6 +122,11 @@ class DataConfig:
     train_split: float = 0.7
     val_split: float = 0.15
     test_split: float = 0.15
+    # Stratified window sampling (only affects training; val/test are untouched).
+    stratified_sampling: bool = False
+    stratified_normal: float = 0.5     # ratio: max T < 500 °C
+    stratified_hot: float = 0.3        # ratio: max T ∈ [500, solidus) °C
+    stratified_melting: float = 0.2    # ratio: max T ≥ solidus °C
 
 
 @dataclass

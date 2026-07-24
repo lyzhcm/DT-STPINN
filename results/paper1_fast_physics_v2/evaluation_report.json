@@ -1,0 +1,175 @@
+{
+  "config": "configs/paper1_fast.yaml",
+  "checkpoint": "logs/paper1_fast_physics_v2/best_model.pt",
+  "solidus": 1604.85,
+  "liquidus": 1654.85,
+  "global_metrics": {
+    "count": 33691086,
+    "MAE": 4.051369667053223,
+    "RMSE": 7.2997846603393555,
+    "Bias": -3.6013195514678955,
+    "AbsErrorP50": 3.6602916717529297,
+    "AbsErrorP90": 7.421142578125,
+    "AbsErrorP95": 8.90374755859375,
+    "AbsErrorP99": 14.3736572265625,
+    "MaxError": 2341.57861328125
+  },
+  "per_bin_metrics": {
+    "<= 100 \u00b0C": {
+      "count": 8697207,
+      "proportion": 0.2581456412535945,
+      "MAE": 3.676337718963623,
+      "RMSE": 4.079164981842041,
+      "Bias": -3.0369060039520264,
+      "AbsErrorP50": 3.878662109375,
+      "AbsErrorP90": 4.643110275268555,
+      "AbsErrorP95": 4.767322540283203,
+      "AbsErrorP99": 5.25,
+      "MaxError": 1292.0
+    },
+    "100\u2013500 \u00b0C": {
+      "count": 4786654,
+      "proportion": 0.1420747909402505,
+      "MAE": 1.672330379486084,
+      "RMSE": 3.117061138153076,
+      "Bias": -0.5127321481704712,
+      "AbsErrorP50": 1.452301025390625,
+      "AbsErrorP90": 3.3117218017578125,
+      "AbsErrorP95": 4.008636474609375,
+      "AbsErrorP99": 4.9368896484375,
+      "MaxError": 1171.5574951171875
+    },
+    "500\u20131000 \u00b0C": {
+      "count": 20200537,
+      "proportion": 0.5995810583250418,
+      "MAE": 4.7100958824157715,
+      "RMSE": 6.573493957519531,
+      "Bias": -4.510883331298828,
+      "AbsErrorP50": 3.99688720703125,
+      "AbsErrorP90": 8.56982421875,
+      "AbsErrorP95": 10.2469482421875,
+      "AbsErrorP99": 17.622802734375,
+      "MaxError": 952.6525268554688
+    },
+    "1000\u20131604.85 \u00b0C": {
+      "count": 6321,
+      "proportion": 0.00018761639206287385,
+      "MAE": 176.1949005126953,
+      "RMSE": 264.1544189453125,
+      "Bias": -171.99806213378906,
+      "AbsErrorP50": 119.27001953125,
+      "AbsErrorP90": 345.664306640625,
+      "AbsErrorP95": 536.0802001953125,
+      "AbsErrorP99": 1178.5147705078125,
+      "MaxError": 1543.01513671875
+    },
+    "1604.85\u20131654.85 \u00b0C (mushy)": {
+      "count": 33,
+      "proportion": 9.79487571282208e-07,
+      "MAE": 507.6904602050781,
+      "RMSE": 595.1343383789062,
+      "Bias": -507.6904602050781,
+      "AbsErrorP50": 440.9271240234375,
+      "AbsErrorP90": 774.7393798828125,
+      "AbsErrorP95": 1115.272216796875,
+      "AbsErrorP99": 1590.732421875,
+      "MaxError": 1597.7384033203125
+    },
+    ">= 1654.85 \u00b0C (liquid)": {
+      "count": 334,
+      "proportion": 9.913601479038105e-06,
+      "MAE": 716.10107421875,
+      "RMSE": 913.0335693359375,
+      "Bias": -716.10107421875,
+      "AbsErrorP50": 407.392333984375,
+      "AbsErrorP90": 1636.5938720703125,
+      "AbsErrorP95": 2177.993896484375,
+      "AbsErrorP99": 2255.2919921875,
+      "MaxError": 2341.57861328125
+    }
+  },
+  "detection_metrics": {
+    "solidus_threshold": 1604.85,
+    "liquidus_threshold": 1654.85,
+    "recall_above_solidus": 0.0,
+    "precision_above_solidus": 0.0,
+    "f1_above_solidus": 0.0,
+    "iou_above_solidus": 0.0,
+    "true_positive": 0,
+    "false_positive": 0,
+    "false_negative": 367
+  },
+  "per_timestep_max_summary": {
+    "num_steps": 351,
+    "true_max_range": [
+      604.5986328125,
+      2948.343505859375
+    ],
+    "pred_max_range": [
+      608.0,
+      1536.0
+    ],
+    "max_abs_error": 1444.343505859375,
+    "mean_abs_error": 260.309091942942
+  },
+  "worst_case": {
+    "abs_error": 2341.57861328125,
+    "prediction": 29.375,
+    "target": 2370.95361328125,
+    "node_index": 24437,
+    "target_step": 2128,
+    "target_time": 42560.0,
+    "target_time_s": 42.56,
+    "coord_mm": [
+      10.21634578704834,
+      -9.375,
+      1.0
+    ],
+    "diagnostic": {
+      "input_window_temperatures": {
+        "t-4": 20.0,
+        "t-3": 20.0,
+        "t-2": 20.0,
+        "t-1": 20.0
+      },
+      "activation_status": {
+        "step_2124": true,
+        "step_2125": true,
+        "step_2126": true,
+        "step_2127": true,
+        "step_2128_target": true
+      },
+      "node_just_became_active": false,
+      "laser_position_mm": [
+        10.01602554321289,
+        -1.5625,
+        1.0
+      ],
+      "laser_distance_mm": 7.815067768096924,
+      "boundary_label": -10,
+      "neighbor_count_1st_order": 5,
+      "neighbor_count_2nd_order": 12,
+      "neighbor_temperatures_1st_order_sample": {
+        "23324": 1551.192626953125,
+        "24422": 1626.4884033203125,
+        "24436": 1886.3031005859375,
+        "24438": 20.0,
+        "24452": 1339.5330810546875
+      },
+      "neighbor_temperatures_2nd_order_sample": {
+        "22211": 1142.95751953125,
+        "23309": 1232.524658203125,
+        "23323": 1563.8746337890625,
+        "23325": 915.4990234375,
+        "23339": 1196.130615234375,
+        "24423": 20.0,
+        "24425": 234.7122802734375,
+        "24426": 1584.53466796875,
+        "24435": 1135.5970458984375,
+        "24449": 612.9950561523438,
+        "24451": 20.0,
+        "24454": 1410.6351318359375
+      }
+    }
+  }
+}

@@ -97,13 +97,13 @@ class DynamicGraph:
         return torch.tensor(directions, dtype=torch.float32)
 
     def get_active_mask(self, t: int) -> torch.Tensor:
-        return self.live[t].clone()
+        return self.live[t]
 
     def get_graph_at(self, t: int) -> Data:
-        coords_norm = self.coords.clone()
-        T_raw = self.temperatures[t].clone()
+        coords_norm = self.coords
+        T_raw = self.temperatures[t]
         mask = self.get_active_mask(t)
-        laser_pos = self._laser_positions[t].clone()
+        laser_pos = self._laser_positions[t]
         scan_dir = self._scan_directions[t].item()
         time_val = self.times[t].item()
 
@@ -116,12 +116,12 @@ class DynamicGraph:
 
         return Data(
             x=x,
-            edge_index=self.edge_index.clone(),
-            edge_attr=self.edge_attr.clone(),
+            edge_index=self.edge_index,
+            edge_attr=self.edge_attr,
             y=T_raw.view(-1, 1),
             mask=mask.bool(),
             coords=coords_norm,
-            boundary=self.boundary.clone(),
+            boundary=self.boundary,
             laser_pos=laser_pos,
             dt=dt,
             time=time_val,
@@ -133,6 +133,17 @@ class DynamicGraph:
 
     def to(self, device: torch.device) -> "DynamicGraph":
         self.device = device
+        self.coords = self.coords.to(device)
+        self.times = self.times.to(device)
+        self.temperatures = self.temperatures.to(device)
+        self.live = self.live.to(device)
+        self.boundary = self.boundary.to(device)
+        self.layer_ids = self.layer_ids.to(device)
+        self.edge_index = self.edge_index.to(device)
+        self.edge_attr = self.edge_attr.to(device)
+        self.node_k = self.node_k.to(device)
+        self._laser_positions = self._laser_positions.to(device)
+        self._scan_directions = self._scan_directions.to(device)
         return self
 
     def to_cache_dict(self) -> dict:

@@ -1,0 +1,14 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Model checkpoints
+*.pt
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+logs/

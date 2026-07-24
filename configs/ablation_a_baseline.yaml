@@ -1,0 +1,95 @@
+# Ablation A: baseline re-train (paper1_fast, 15 epochs, no hotspot changes)
+# Used as the reference point for comparing hotspot loss/sampling improvements.
+
+model:
+  node_feature_dim: 12
+  edge_feature_dim: 5
+  hidden_dim: 64
+  spatial:
+    gnn_type: "GATv2Conv"
+    num_layers: 1
+    heads: 2
+    dropout: 0.1
+    use_checkpoint: false
+  temporal:
+    num_layers: 2
+    heads: 4
+    ff_dim: 256
+    dropout: 0.1
+    max_seq_len: 32
+  fusion:
+    type: "cross_attention"
+    heads: 4
+  decoder:
+    temperature: true
+    stress: false
+    displacement: false
+    heat_flux: false
+
+material:
+  name: "Ti-6Al-4V"
+  density: 4430.0
+  specific_heat: 526.3
+  thermal_conductivity: 6.7
+  thermal_expansion: 8.6e-6
+  solidus_temp: 1604.85
+  liquidus_temp: 1654.85
+  emissivity: 0.35
+  convection_coeff: 10.0
+  ambient_temp: 20.0
+
+physics:
+  heat_conduction: true
+  fourier_flux: false
+  boundary_convection: true
+  boundary_radiation: false
+  initial_condition: true
+  coordinate_scale_to_m: 1.0e-3
+  time_scale_to_s: 1.0e-3
+  normalize_pde_residual: true
+  pde_temperature_scale: 1000.0
+  pde_time_scale: 1.0
+  boundary_label_mode: "positive_dirichlet"
+
+loss:
+  lambda_T: 1.0
+  lambda_PDE: 0.1
+  lambda_BC: 0.1
+  lambda_IC: 0.5
+  lambda_smooth: 0.01
+  # hotspot disabled for baseline
+  lambda_hot: 0.0
+  hot_threshold: 500.0
+  hot_weight: 5.0
+  hot_weight_power: 2.0
+
+training:
+  batch_size: 1
+  accumulate_grad_batches: 4
+  epochs: 15
+  lr: 1.0e-3
+  lr_scheduler: "cosine"
+  weight_decay: 1.0e-5
+  grad_clip: 1.0
+  early_stopping_patience: 20
+  use_amp: true
+  amp_dtype: "auto"
+
+data:
+  vtu_dir: "data/raw"
+  time_sampling: "log"
+  window_size: 4
+  predict_steps: 1
+  k_neighbors: 16
+  use_mesh_edges: true
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  stratified_sampling: false
+
+logging:
+  log_dir: "logs"
+  experiment_name: "ablation_a_baseline"
+  save_every: 20
+  eval_every: 5
+  use_wandb: false

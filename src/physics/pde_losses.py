@@ -16,10 +16,14 @@ class HeatConductionLoss:
     PDE: ρ * Cp * ∂T/∂t - ∇ · (k ∇T) - Q_laser = 0
     """
 
-    def __init__(self, rho: float, Cp: float, k: float):
+    def __init__(self, rho: float, Cp: float, k: float,
+                 residual_scale: float = 1.0):
         self.rho = rho
         self.Cp = Cp
         self.k = k
+        if residual_scale <= 0:
+            raise ValueError("residual_scale must be greater than zero.")
+        self.residual_scale = residual_scale
 
     def compute(self, T: torch.Tensor, T_prev: torch.Tensor,
                 coords: torch.Tensor, edge_index: torch.Tensor,
@@ -44,6 +48,7 @@ class HeatConductionLoss:
         laplacian_T = spatial_laplacian(T.squeeze(-1), coords, edge_index)
 
         residual = self.rho * self.Cp * dT_dt - self.k * laplacian_T - Q_laser
+        residual = residual / self.residual_scale
 
         if mask is not None:
             residual = residual[mask]

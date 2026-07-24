@@ -9,6 +9,7 @@ model:
     num_layers: 2
     heads: 4
     dropout: 0.1
+    use_checkpoint: true
   temporal:
     num_layers: 4
     heads: 8
@@ -30,11 +31,11 @@ material:
   specific_heat: 526.3
   thermal_conductivity: 6.7
   thermal_expansion: 8.6e-6
-  solidus_temp: 1878.0
-  liquidus_temp: 1928.0
+  solidus_temp: 1604.85
+  liquidus_temp: 1654.85
   emissivity: 0.35
   convection_coeff: 10.0
-  ambient_temp: 293.15
+  ambient_temp: 20.0
 
 physics:
   heat_conduction: true
@@ -42,6 +43,13 @@ physics:
   boundary_convection: true
   boundary_radiation: false
   initial_condition: true
+  # VTU coordinates are millimeters; filename indices are milliseconds.
+  coordinate_scale_to_m: 1.0e-3
+  time_scale_to_s: 1.0e-3
+  normalize_pde_residual: true
+  pde_temperature_scale: 1000.0
+  pde_time_scale: 1.0
+  boundary_label_mode: "positive_dirichlet"
 
 loss:
   lambda_T: 1.0
@@ -60,6 +68,7 @@ training:
   grad_clip: 1.0
   early_stopping_patience: 50
   use_amp: true
+  amp_dtype: "auto"
 
 data:
   vtu_dir: "data/raw"

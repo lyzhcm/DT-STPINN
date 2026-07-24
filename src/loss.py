@@ -21,19 +21,62 @@ class DTSTPINNLoss:
         self.lambda_IC = config.loss.lambda_IC
         self.lambda_smooth = config.loss.lambda_smooth
 
+        # Hotspot re-weighting: penalises missed melt-pool predictions.
+        self.lambda_hot = getattr(config.loss, "lambda_hot", 0.0)
+        self.hot_threshold = getattr(config.loss, "hot_threshold", 500.0)
+        self.hot_weight = getattr(config.loss, "hot_weight", 5.0)
+        self.hot_weight_power = getattr(config.loss, "hot_weight_power", 2.0)
+        # Reference temperature for weight ramp: liquidus gives the steepest
+        # gradient right where melting physics matters most.
+        self._hot_ref_temp = max(
+            getattr(material_props, "liquidus_temp", 1654.85),
+            self.hot_threshold + 1.0,
+        )
+
         self.physics_config = config.physics
         self.material = material_props
+
+        self.coordinate_scale_to_m = getattr(
+            config.physics, "coordinate_scale_to_m", 1.0
+        )
+        self.time_scale_to_s = getattr(config.physics, "time_scale_to_s", 1.0)
+        normalize_pde = getattr(
+            config.physics, "normalize_pde_residual", False
+        )
+        temperature_scale = getattr(
+            config.physics, "pde_temperature_scale", 1000.0
+        )
+        time_scale = getattr(config.physics, "pde_time_scale", 1.0)
+        if self.coordinate_scale_to_m <= 0 or self.time_scale_to_s <= 0:
+            raise ValueError("Physics coordinate/time scale factors must be positive.")
+        if temperature_scale <= 0 or time_scale <= 0:
+            raise ValueError("PDE characteristic scales must be positive.")
+
+        self.pde_residual_scale = 1.0
+        if normalize_pde:
+            self.pde_residual_scale = (
+                material_props.density
+                * material_props.specific_heat
+                * temperature_scale
+                / time_scale
+            )
 
         self.heat_conduction = HeatConductionLoss(
             rho=material_props.density,
             Cp=material_props.specific_heat,
             k=material_props.thermal_conductivity,
+            residual_scale=self.pde_residual_scale,
         )
         self.boundary_loss = BoundaryConditionLoss(
             k=material_props.thermal_conductivity,
             h_conv=material_props.convection_coeff,
             emissivity=material_props.emissivity,
             T_ambient=material_props.ambient_temp,
+            label_mode=getattr(
+                config.physics, "boundary_label_mode", "legacy_signed"
+            ),
+            enable_convection=config.physics.boundary_convection,
+            enable_radiation=config.physics.boundary_radiation,
         )
         self.initial_condition = InitialConditionLoss(
             T_initial=material_props.ambient_temp,
@@ -56,25 +99,46 @@ class DTSTPINNLoss:
 
         T_pred = pred.squeeze(-1)
         T_target = target.squeeze(-1)
+        coords_physics = coords * self.coordinate_scale_to_m
+        dt_physics = dt * self.time_scale_to_s
 
-        loss_T = ((T_pred - T_target) ** 2)
+        sq_error = (T_pred - T_target) ** 2
         if mask_bool is not None:
-            loss_T = loss_T[mask_bool]
-        losses["T"] = self.lambda_T * loss_T.mean()
+            sq_error_active = sq_error[mask_bool]
+        else:
+            sq_error_active = sq_error
+        losses["T"] = self.lambda_T * sq_error_active.mean()
+
+        # Hotspot-weighted loss — continuous ramp so every degree above
+        # ``hot_threshold`` receives extra penalty.  The regular T loss
+        # keeps the bulk pinned while this term drives melt-pool recall.
+        if self.lambda_hot > 0:
+            hot_ratio = (
+                (T_target - self.hot_threshold)
+                / (self._hot_ref_temp - self.hot_threshold)
+            ).clamp(0.0, 1.0)
+            weights = 1.0 + self.hot_weight * hot_ratio.pow(self.hot_weight_power)
+            loss_hot_per_node = weights * sq_error
+            if mask_bool is not None:
+                loss_hot_per_node = loss_hot_per_node[mask_bool]
+            losses["hotspot"] = self.lambda_hot * loss_hot_per_node.mean()
 
         if self.physics_config.heat_conduction and prev_temp is not None:
             if laser_pos is not None:
-                Q_laser = gaussian_heat_source(coords, laser_pos, power=power)
+                laser_pos_physics = laser_pos * self.coordinate_scale_to_m
+                Q_laser = gaussian_heat_source(
+                    coords_physics, laser_pos_physics, power=power
+                )
             else:
                 Q_laser = torch.zeros(coords.shape[0], device=pred.device, dtype=pred.dtype)
             losses["PDE"] = self.lambda_PDE * self.heat_conduction.compute(
                 pred.squeeze(-1), prev_temp.squeeze(-1),
-                coords, edge_index, dt, Q_laser, mask_bool
+                coords_physics, edge_index, dt_physics, Q_laser, mask_bool
             )
 
         if self.physics_config.boundary_convection:
             losses["BC"] = self.lambda_BC * self.boundary_loss.compute(
-                pred, coords, edge_index, boundary, mask_bool
+                pred, coords_physics, edge_index, boundary, mask_bool
             )
 
         if self.physics_config.initial_condition and is_initial is not None:

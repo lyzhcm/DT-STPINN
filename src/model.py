@@ -34,6 +34,7 @@ class DTSTPINN(nn.Module):
             heads=config.model.spatial.heads,
             edge_dim=self.edge_feature_dim,
             dropout=config.model.spatial.dropout,
+            use_checkpoint=getattr(config.model.spatial, "use_checkpoint", False),
         )
 
         self.temporal_encoder = TemporalEncoder(
@@ -80,9 +81,6 @@ class DTSTPINN(nn.Module):
 
         z_s = torch.stack([f for f in spatial_features], dim=0).unsqueeze(0)
         mask_stack = torch.stack(masks, dim=0).unsqueeze(0)
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
         z_t = self.temporal_encoder(z_s, mask_stack)
 
