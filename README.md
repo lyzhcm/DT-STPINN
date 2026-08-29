@@ -70,6 +70,21 @@ Use `scripts/evaluate_checkpoint.py` as the single checkpoint evaluation protoco
 
 For long comparisons, reuse the frozen baseline split file in both training and evaluation. The baseline freeze script writes it as `artifacts/baselines/<baseline_name>/split_indices.json`; the artifact directory stays local, but the path should be recorded in experiment notes.
 
+To rerun and freeze the single 50-epoch baseline control with one command, use:
+
+```powershell
+python scripts\run_baseline_protocol.py `
+  --config configs\feature_e0_baseline.yaml `
+  --vtu_dir F:\VTU `
+  --epochs 50 `
+  --graph_device cuda `
+  --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
+  --resume_from_last `
+  --dry_run
+```
+
+Remove `--dry_run` to launch the long run. The wrapper trains with `scripts/train.py`, evaluates `best_model.pt` with `scripts/evaluate_checkpoint.py`, then freezes the checkpoint, config, evaluation report, split, seed, git commit, and commands with `scripts/freeze_baseline.py`.
+
 ```powershell
 python scripts\evaluate_checkpoint.py `
   --config configs\feature_e0_baseline.yaml `
