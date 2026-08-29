@@ -1,0 +1,205 @@
+"""Validate chunked laser trajectory feature datasets before ablation runs."""
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+
+REQUIRED_COLUMNS = [
+    "laser_x_mm", "laser_y_mm", "laser_z_mm",
+    "dx_mm", "dy_mm", "dz_mm",
+    "distance_to_laser_mm",
+    "current_along_mm", "current_cross_mm",
+    "line_along_mm", "line_cross_mm", "time_to_arrival_s", "arrival_raw_time",
+    "layer_idx", "track_physical", "track_program", "direction_sign",
+    "in_laser_ellipsoid", "in_track_neighborhood",
+]
+
+
+def load_manifest(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as f:
+        manifest = json.load(f)
+    if not isinstance(manifest, dict):
+        raise ValueError(f"Manifest must be a JSON object: {path}")
+    return manifest
+
+
+def resolve_chunk_path(manifest_path: Path, chunk: dict[str, Any]) -> Path:
+    chunk_path = Path(str(chunk["path"]))
+    if chunk_path.is_absolute():
+        return chunk_path
+    candidate = Path.cwd() / chunk_path
+    if candidate.exists():
+        return candidate
+    return manifest_path.parent / chunk_path
+
+
+def validate_columns(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
+    columns = [str(c) for c in manifest.get("columns", [])]
+    missing = [name for name in REQUIRED_COLUMNS if name not in columns]
+    group_errors: list[str] = []
+    column_set = set(columns)
+    for group, group_columns in (manifest.get("feature_groups") or {}).items():
+        absent = [str(c) for c in group_columns if str(c) not in column_set]
+        if absent:
+            group_errors.append(f"{group}: missing {', '.join(absent)}")
+    return missing, group_errors
+
+
+def summarize_chunk(chunk_path: Path, expected_columns: list[str], node_index: int | None) -> tuple[dict[str, Any], dict[str, float] | None, list[str]]:
+    errors: list[str] = []
+    with np.load(chunk_path, allow_pickle=False) as data:
+        features = data["features"]
+        coords = data["coords_mm"]
+        columns = [str(c) for c in data["columns"].tolist()]
+        target_step = int(data["target_step"][0])
+        raw_time = float(data["raw_time"][0])
+
+    if columns != expected_columns:
+        errors.append("chunk columns do not match manifest columns")
+    if features.ndim != 2:
+        errors.append(f"features must be 2D, got shape {features.shape}")
+    if coords.ndim != 2 or coords.shape[1] != 3:
+        errors.append(f"coords_mm must have shape [N, 3], got {coords.shape}")
+    if features.shape[0] != coords.shape[0]:
+        errors.append(f"features/coords node count mismatch: {features.shape[0]} vs {coords.shape[0]}")
+    if features.shape[1] != len(expected_columns):
+        errors.append(f"feature column count mismatch: {features.shape[1]} vs {len(expected_columns)}")
+    if not np.isfinite(features).all():
+        errors.append("features contain NaN or Inf")
+    if not np.isfinite(coords).all():
+        errors.append("coords_mm contains NaN or Inf")
+
+    column_index = {name: idx for idx, name in enumerate(expected_columns)}
+
+    def col(name: str) -> np.ndarray:
+        return features[:, column_index[name]]
+
+    summary = {
+        "target_step": target_step,
+        "raw_time": raw_time,
+        "path": str(chunk_path),
+        "num_nodes": int(features.shape[0]),
+        "num_columns": int(features.shape[1]),
+        "min_distance_to_laser_mm": float(np.min(col("distance_to_laser_mm"))),
+        "p50_distance_to_laser_mm": float(np.percentile(col("distance_to_laser_mm"), 50)),
+        "min_abs_time_to_arrival_s": float(np.min(np.abs(col("time_to_arrival_s")))),
+        "in_laser_ellipsoid_count": int(np.sum(col("in_laser_ellipsoid") > 0.5)),
+        "in_track_neighborhood_count": int(np.sum(col("in_track_neighborhood") > 0.5)),
+    }
+
+    node_features: dict[str, float] | None = None
+    if node_index is not None:
+        if node_index < 0 or node_index >= features.shape[0]:
+            errors.append(f"node index {node_index} outside [0, {features.shape[0] - 1}]")
+        else:
+            node_features = {name: float(features[node_index, idx]) for name, idx in column_index.items()}
+            node_features.update({
+                "node_index": float(node_index),
+                "coord_x_mm": float(coords[node_index, 0]),
+                "coord_y_mm": float(coords[node_index, 1]),
+                "coord_z_mm": float(coords[node_index, 2]),
+            })
+
+    return summary, node_features, errors
+
+
+def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not rows:
+        return
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--manifest", required=True, help="Path to laser feature manifest.json")
+    parser.add_argument("--output_json", default=None)
+    parser.add_argument("--output_csv", default=None)
+    parser.add_argument("--max_chunks", type=int, default=None)
+    parser.add_argument("--step", type=int, default=None, help="Only inspect this target step")
+    parser.add_argument("--node_index", type=int, default=None, help="Optional node row to include in the JSON report")
+    args = parser.parse_args()
+
+    manifest_path = Path(args.manifest)
+    manifest = load_manifest(manifest_path)
+    missing_columns, group_errors = validate_columns(manifest)
+    errors = [f"missing required column: {name}" for name in missing_columns]
+    errors.extend(group_errors)
+
+    columns = [str(c) for c in manifest.get("columns", [])]
+    chunks = list(manifest.get("chunks", []))
+    if args.step is not None:
+        chunks = [chunk for chunk in chunks if int(chunk.get("step", -1)) == args.step]
+    if args.max_chunks is not None:
+        chunks = chunks[: args.max_chunks]
+    if not chunks:
+        errors.append("no chunks selected for validation")
+
+    summaries: list[dict[str, Any]] = []
+    node_reports: list[dict[str, Any]] = []
+    for chunk in chunks:
+        chunk_path = resolve_chunk_path(manifest_path, chunk)
+        if not chunk_path.exists():
+            errors.append(f"missing chunk: {chunk_path}")
+            continue
+        summary, node_features, chunk_errors = summarize_chunk(chunk_path, columns, args.node_index)
+        summaries.append(summary)
+        errors.extend(f"{chunk_path}: {err}" for err in chunk_errors)
+        if node_features is not None:
+            node_reports.append({
+                "target_step": summary["target_step"],
+                "raw_time": summary["raw_time"],
+                **node_features,
+            })
+
+    report = {
+        "manifest": str(manifest_path),
+        "ok": not errors,
+        "config": manifest.get("config"),
+        "xml": manifest.get("xml"),
+        "num_manifest_chunks": len(manifest.get("chunks", [])),
+        "num_checked_chunks": len(summaries),
+        "num_columns": len(columns),
+        "required_columns": REQUIRED_COLUMNS,
+        "errors": errors,
+        "summaries": summaries,
+        "node_reports": node_reports,
+    }
+
+    output_json = Path(args.output_json) if args.output_json else manifest_path.parent / "feature_check_report.json"
+    output_csv = Path(args.output_csv) if args.output_csv else manifest_path.parent / "feature_check_summary.csv"
+    output_json.parent.mkdir(parents=True, exist_ok=True)
+    output_json.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    write_csv(output_csv, summaries)
+
+    print(f"Checked chunks: {len(summaries)}")
+    print(f"Required columns: {len(REQUIRED_COLUMNS)}, feature columns: {len(columns)}")
+    if summaries:
+        min_dist = min(row["min_distance_to_laser_mm"] for row in summaries)
+        ellipsoid_hits = sum(row["in_laser_ellipsoid_count"] for row in summaries)
+        track_hits = sum(row["in_track_neighborhood_count"] for row in summaries)
+        print(f"Min laser distance: {min_dist:.6f} mm")
+        print(f"Ellipsoid hits: {ellipsoid_hits}")
+        print(f"Track-neighborhood hits: {track_hits}")
+    print(f"JSON report: {output_json}")
+    print(f"CSV summary: {output_csv}")
+    if errors:
+        print("Validation failed:")
+        for err in errors:
+            print(f"  - {err}")
+        sys.exit(1)
+    print("Validation OK")
+
+
+if __name__ == "__main__":
+    main()
