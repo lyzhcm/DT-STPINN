@@ -23,6 +23,8 @@ class DEDTemporalDataset(Dataset):
                  laser_feature_along_radius_mm: float = 0.0,
                  laser_feature_depth_mm: float = 0.1,
                  laser_feature_time_scale_to_s: float = 1.0e-3,
+                 laser_feature_include_laser_coordinates: bool = False,
+                 laser_feature_include_scan_geometry: bool = False,
                  laser_feature_include_sweep: bool = False,
                  laser_feature_include_exposure: bool = False,
                  laser_feature_exposure_source: str = "samples",
@@ -72,6 +74,12 @@ class DEDTemporalDataset(Dataset):
         self.laser_feature_along_radius_mm = max(along_radius, 1.0e-6)
         self.laser_feature_depth_mm = max(float(laser_feature_depth_mm), 1.0e-6)
         self.laser_feature_time_scale_to_s = float(laser_feature_time_scale_to_s)
+        self.laser_feature_include_laser_coordinates = bool(
+            laser_feature_include_laser_coordinates
+        )
+        self.laser_feature_include_scan_geometry = bool(
+            laser_feature_include_scan_geometry
+        )
         self.laser_feature_include_sweep = bool(laser_feature_include_sweep)
         self.laser_feature_include_exposure = bool(laser_feature_include_exposure)
         self.laser_feature_exposure_source = str(laser_feature_exposure_source).lower()
@@ -196,6 +204,10 @@ class DEDTemporalDataset(Dataset):
             return 0
 
         dim = 9
+        if self.laser_feature_include_laser_coordinates:
+            dim += 6
+        if self.laser_feature_include_scan_geometry:
+            dim += 2
         if self.laser_feature_include_body_source:
             dim += 5
         if self.laser_feature_include_sweep:
@@ -333,6 +345,16 @@ class DEDTemporalDataset(Dataset):
                 target_scan_sin,
                 target_scan_cos,
             ]
+
+            if self.laser_feature_include_laser_coordinates:
+                current_laser = data.laser_pos.to(device=device, dtype=dtype)
+                features.extend([
+                    current_laser.view(1, 3).expand(coords.shape[0], 3),
+                    laser.view(1, 3).expand(coords.shape[0], 3),
+                ])
+
+            if self.laser_feature_include_scan_geometry:
+                features.extend([along_xy, cross_xy])
 
             if self.laser_feature_include_body_source:
                 body_heat, body_gate, body_along_norm, body_cross_norm, body_depth_norm = (

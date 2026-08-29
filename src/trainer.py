@@ -290,6 +290,7 @@ class Trainer:
         self.model.eval()
         total_loss = 0.0
         all_preds, all_targets = [], []
+        all_laser_region_preds, all_laser_region_targets = [], []
         all_hot_probs, all_hot_targets = [], []
         all_spec_gates, all_process_gates, all_neighbor_gates = [], [], []
         all_cold_to_hot_gates, all_cold_to_hot_targets = [], []
@@ -544,6 +545,14 @@ class Trainer:
                 valid_targets = target_flat[valid_mask]
                 all_preds.append(valid_preds.cpu())
                 all_targets.append(valid_targets.cpu())
+                laser_region_mask = self._target_laser_region_mask(
+                    coords=coords,
+                    laser_pos=laser_pos,
+                    valid_mask=valid_mask,
+                )
+                if laser_region_mask is not None and laser_region_mask.any():
+                    all_laser_region_preds.append(pred_flat[laser_region_mask].cpu())
+                    all_laser_region_targets.append(target_flat[laser_region_mask].cpu())
                 if spec_gate_flat is not None:
                     all_spec_gates.append(spec_gate_flat[valid_mask].cpu())
                 if process_gate_flat is not None:
@@ -740,6 +749,13 @@ class Trainer:
                 target_threshold=self.loss_fn.hot_cls_threshold,
                 score_threshold=self.loss_fn.hot_cls_threshold,
             )
+            liquidus = float(getattr(self.config.material, "liquidus_temp", 0.0))
+            liquidus_det = compute_binary_detection_metrics(
+                preds,
+                targs,
+                target_threshold=liquidus,
+                score_threshold=liquidus,
+            )
             metrics.update({
                 "TempRecallAboveSolidus": temp_det["recall"],
                 "TempPrecisionAboveSolidus": temp_det["precision"],
@@ -747,7 +763,22 @@ class Trainer:
                 "TempTPAboveSolidus": temp_det["true_positive"],
                 "TempFPAboveSolidus": temp_det["false_positive"],
                 "TempFNAboveSolidus": temp_det["false_negative"],
+                "TempRecallAboveLiquidus": liquidus_det["recall"],
+                "TempPrecisionAboveLiquidus": liquidus_det["precision"],
+                "TempF1AboveLiquidus": liquidus_det["f1"],
+                "TempTPAboveLiquidus": liquidus_det["true_positive"],
+                "TempFPAboveLiquidus": liquidus_det["false_positive"],
+                "TempFNAboveLiquidus": liquidus_det["false_negative"],
             })
+            if all_laser_region_preds:
+                laser_region_metrics = compute_metrics(
+                    torch.cat(all_laser_region_preds),
+                    torch.cat(all_laser_region_targets),
+                )
+                metrics.update({
+                    f"LaserRegion{key}": value
+                    for key, value in laser_region_metrics.items()
+                })
             if all_hot_probs:
                 hot_probs = torch.cat(all_hot_probs)
                 hot_targs = torch.cat(all_hot_targets)
@@ -838,6 +869,35 @@ class Trainer:
             "metrics": metrics,
             "worst_case": worst_case,
         }
+
+    def _target_laser_region_mask(
+            self,
+            *,
+            coords: torch.Tensor,
+            laser_pos: torch.Tensor,
+            valid_mask: torch.Tensor) -> torch.Tensor | None:
+        """Return valid nodes within the target-step laser influence radius."""
+        if not isinstance(coords, torch.Tensor) or not isinstance(laser_pos, torch.Tensor):
+            return None
+        radius = float(getattr(self.config.data, "laser_feature_radius_mm", 0.0))
+        if radius <= 0.0:
+            return None
+
+        coords_value = coords.detach().float()
+        laser_value = laser_pos.detach().float().to(device=coords_value.device)
+        if coords_value.ndim == 2:
+            laser = laser_value.reshape(-1, 3)[0].view(1, 3)
+            distances = torch.linalg.vector_norm(coords_value - laser, dim=1)
+        elif coords_value.ndim == 3:
+            batch_size = coords_value.shape[0]
+            laser = laser_value.reshape(batch_size, 3).view(batch_size, 1, 3)
+            distances = torch.linalg.vector_norm(coords_value - laser, dim=2).reshape(-1)
+        else:
+            return None
+
+        if distances.numel() != valid_mask.numel():
+            return None
+        return valid_mask & (distances <= radius)
 
     @staticmethod
     def _batch_scalar(value, sample_index: int):

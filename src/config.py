@@ -325,11 +325,16 @@ class DataConfig:
 
     # Optional process lookahead features. These use known target-step laser
     # trajectory/geometry, not target temperature labels.
+    # Set to E0/E1/E2/E3 to expand the documented minimal feature ablations.
+    # Keep "manual" for legacy configs that set the individual flags below.
+    laser_feature_group: str = "manual"
     use_target_laser_features: bool = False
     laser_feature_radius_mm: float = 0.4
     laser_feature_along_radius_mm: float = 0.0
     laser_feature_depth_mm: float = 0.1
     laser_feature_time_scale_to_s: float = 1.0e-3
+    laser_feature_include_laser_coordinates: bool = False
+    laser_feature_include_scan_geometry: bool = False
     laser_feature_include_sweep: bool = False
     laser_feature_include_exposure: bool = False
     laser_feature_exposure_source: str = "samples"
@@ -389,6 +394,41 @@ class DataConfig:
     laser_each_layer_time_s: float = 0.0
     laser_alternate_layer_scan_direction: bool = False
     laser_reverse_hatch_order_parity: int = -1
+
+    def apply_laser_feature_group(self) -> None:
+        """Expand E0/E1/E2/E3 into explicit feature flags.
+
+        The grouped settings are intentionally narrow and deterministic so the
+        next ablation family differs only by prescribed laser-path features.
+        Legacy/manual configs keep their individual flag values untouched.
+        """
+        group = str(self.laser_feature_group or "manual").strip().lower()
+        if group in {"", "manual", "custom"}:
+            return
+        if group not in {"e0", "e1", "e2", "e3"}:
+            raise ValueError(
+                "data.laser_feature_group must be one of: manual, E0, E1, E2, E3"
+            )
+
+        self.use_target_laser_features = group != "e0"
+        self.laser_feature_include_laser_coordinates = group in {"e1", "e2", "e3"}
+        self.laser_feature_include_scan_geometry = group in {"e2", "e3"}
+        self.laser_feature_include_path_arrival = group in {"e2", "e3"}
+        self.laser_feature_include_path_phase = group == "e3"
+
+        self.laser_feature_include_sweep = False
+        self.laser_feature_include_exposure = False
+        self.laser_feature_include_exposure_split = False
+        self.laser_feature_include_arrival_time = False
+        self.laser_feature_include_neighbor_temp = False
+        self.laser_feature_include_neighbor_hot_stats = False
+        self.laser_feature_include_neighbor_warm_stats = False
+        self.laser_feature_include_body_source = False
+        self.laser_feature_include_path_coordinates = False
+        self.laser_feature_include_path_timing = False
+        self.laser_feature_include_path_body_support = False
+        self.laser_feature_include_path_endpoint = False
+        self.laser_feature_include_path_wake = False
 
 
 @dataclass
@@ -561,6 +601,7 @@ class Config:
         loss = _populate_sub(raw.get("loss", {}), LossConfig)
         training = _populate_sub(raw.get("training", {}), TrainingConfig)
         data = _populate_sub(raw.get("data", {}), DataConfig)
+        data.apply_laser_feature_group()
         logging = _populate_sub(raw.get("logging", {}), LoggingConfig)
 
         return cls(

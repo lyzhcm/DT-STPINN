@@ -1083,3 +1083,31 @@ feature columns.  The manifest defines the minimum feature groups:
 - E2: E1 plus along/cross distances and `time_to_arrival`.
 - E3: E2 plus layer, track, scan direction, and track-neighborhood flags.
 
+## Minimal Feature Ablation Configs
+
+The tracked configs for the next clean experiment family are:
+
+- `configs/feature_e0_baseline.yaml`: fixed 50-epoch E0 control, no target
+  lookahead features, 12 node features.
+- `configs/feature_e1_laser_distance.yaml`: E1, appends current/target laser
+  coordinates plus target-step node-to-laser geometry, 27 node features.
+- `configs/feature_e2_scan_arrival.yaml`: E2, adds scan along/cross geometry and
+  additive-path arrival features, 37 node features.
+- `configs/feature_e3_path_phase.yaml`: E3, adds layer/track/progress/direction
+  path-phase features, 47 node features.
+
+Use the same split, seed, epoch count, checkpoint selection, and evaluation
+script for all four runs:
+
+```powershell
+python scripts\train.py `
+  --config configs\feature_e1_laser_distance.yaml `
+  --vtu_dir F:\VTU `
+  --seed 42 `
+  --graph_device cuda
+```
+
+Only change the config filename for E0/E1/E2/E3.  These configs use the
+calibrated additive_z_scan timing/path settings that aligned the known worst
+hotspot near raw time `42560` better than the default `paper1_fast.yaml` path.
+
