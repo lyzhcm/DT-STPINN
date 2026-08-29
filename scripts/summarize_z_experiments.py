@@ -72,6 +72,7 @@ DEFAULT_TEST_KEYS = [
     "test/TempFPAboveLiquidus",
     "test/TempFNAboveLiquidus",
     "test/LaserRegionMAE",
+    "test/LaserRegionCount",
     "test/LaserRegionMaxError",
     "test/LaserRegionAbsErrorP95",
     "test/LaserRegionAbsErrorP99",
@@ -81,6 +82,8 @@ DEFAULT_TEST_KEYS = [
     "test/worst_pred",
     "test/worst_target",
     "test/worst_abs_error",
+    "test/worst_laser_distance",
+    "test/worst_time_to_arrival",
     "test/worst_path_pre_arrival_gate",
     "test/worst_endpoint_gate",
     "test/worst_program_track_gate",
@@ -124,14 +127,25 @@ def read_latest_scalars(run_dir: Path, tags: list[str]) -> dict[str, float | int
 
 def read_test_report(run_dir: Path, test_keys: list[str]) -> dict[str, float | int | str]:
     report_path = run_dir / "test_metrics.json"
+    report_type = "train_test_metrics"
+    if not report_path.is_file():
+        report_path = run_dir / "evaluation_report.json"
+        report_type = "checkpoint_evaluation"
     row: dict[str, float | int | str] = {key.replace("test/", "test_"): "" for key in test_keys}
     if not report_path.is_file():
         return row
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    metrics = report.get("test_metrics", {})
-    nested_metrics = metrics.get("metrics", {}) if isinstance(metrics, dict) else {}
-    worst = metrics.get("worst_case", {}) if isinstance(metrics, dict) else {}
+    if report_type == "checkpoint_evaluation":
+        nested_metrics = report.get("canonical_metrics", {})
+        worst = report.get("worst_case", {})
+        if not worst and report.get("worst_cases_top10"):
+            worst = report["worst_cases_top10"][0]
+    else:
+        metrics = report.get("test_metrics", {})
+        nested_metrics = metrics.get("metrics", {}) if isinstance(metrics, dict) else {}
+        worst = metrics.get("worst_case", {}) if isinstance(metrics, dict) else {}
+    worst_diag = worst.get("diagnostic", {}) if isinstance(worst, dict) else {}
 
     values = {
         "test/RMSE": nested_metrics.get("RMSE"),
@@ -155,15 +169,27 @@ def read_test_report(run_dir: Path, test_keys: list[str]) -> dict[str, float | i
         "test/TempFPAboveLiquidus": nested_metrics.get("TempFPAboveLiquidus"),
         "test/TempFNAboveLiquidus": nested_metrics.get("TempFNAboveLiquidus"),
         "test/LaserRegionMAE": nested_metrics.get("LaserRegionMAE"),
+        "test/LaserRegionCount": nested_metrics.get("LaserRegionCount"),
         "test/LaserRegionMaxError": nested_metrics.get("LaserRegionMaxError"),
         "test/LaserRegionAbsErrorP95": nested_metrics.get("LaserRegionAbsErrorP95"),
         "test/LaserRegionAbsErrorP99": nested_metrics.get("LaserRegionAbsErrorP99"),
         "test/worst_step": worst.get("target_step"),
-        "test/worst_raw_time": worst.get("target_time_raw"),
+        "test/worst_raw_time": worst.get("target_time_raw", worst.get("target_time")),
         "test/worst_node": worst.get("node_index"),
         "test/worst_pred": worst.get("prediction"),
         "test/worst_target": worst.get("target"),
         "test/worst_abs_error": worst.get("abs_error"),
+        "test/worst_laser_distance": worst.get(
+            "target_laser_distance_mm",
+            worst_diag.get(
+                "target_laser_distance_mm",
+                worst.get("distance_to_laser_mm"),
+            ),
+        ),
+        "test/worst_time_to_arrival": worst.get(
+            "time_to_arrival_s",
+            worst.get("laser_path_time_until_gate"),
+        ),
         "test/worst_path_pre_arrival_gate": worst.get("laser_path_pre_arrival_gate"),
         "test/worst_endpoint_gate": worst.get("laser_endpoint_gate"),
         "test/worst_program_track_gate": worst.get("laser_path_program_track_gate"),
@@ -176,6 +202,7 @@ def read_test_report(run_dir: Path, test_keys: list[str]) -> dict[str, float | i
         if value is not None:
             row[key.replace("test/", "test_")] = value
     row["test_report"] = report_path.name
+    row["test_report_type"] = report_type
     return row
 
 
@@ -227,6 +254,7 @@ def main() -> None:
         columns.append(key.replace("test/", "test_"))
     columns.append("event_file")
     columns.append("test_report")
+    columns.append("test_report_type")
 
     args.output_csv.parent.mkdir(parents=True, exist_ok=True)
     with args.output_csv.open("w", newline="", encoding="utf-8") as f:

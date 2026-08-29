@@ -42,6 +42,7 @@ from src.data.dataset import DEDTemporalDataset, collate_temporal_batch
 from src.data.preprocessing import split_indices
 from src.graph_builder.dynamic_graph import DynamicGraph
 from src.model import DTSTPINN
+from src.utils.laser_path import AdditiveZScanPath
 from src.utils.visualization import write_temperature_vtu
 
 
@@ -223,6 +224,219 @@ def compute_score_detection_metrics(
         "false_positive": fp,
         "false_negative": fn,
     }
+
+
+def compute_regression_metrics(pred: np.ndarray, target: np.ndarray) -> dict:
+    """Compute the canonical pooled regression metrics for experiment reports."""
+    pred = np.asarray(pred, dtype=np.float64).reshape(-1)
+    target = np.asarray(target, dtype=np.float64).reshape(-1)
+    valid = np.isfinite(pred) & np.isfinite(target)
+    if not np.any(valid):
+        return {
+            "count": 0,
+            "MAE": float("nan"),
+            "RMSE": float("nan"),
+            "Bias": float("nan"),
+            "AbsErrorP50": float("nan"),
+            "AbsErrorP90": float("nan"),
+            "AbsErrorP95": float("nan"),
+            "AbsErrorP99": float("nan"),
+            "MaxError": float("nan"),
+        }
+
+    pred = pred[valid]
+    target = target[valid]
+    error = pred - target
+    abs_error = np.abs(error)
+    return {
+        "count": int(pred.size),
+        "MAE": float(np.mean(abs_error)),
+        "RMSE": float(np.sqrt(np.mean(error ** 2))),
+        "Bias": float(np.mean(error)),
+        "AbsErrorP50": _safe_q(abs_error, 0.50),
+        "AbsErrorP90": _safe_q(abs_error, 0.90),
+        "AbsErrorP95": _safe_q(abs_error, 0.95),
+        "AbsErrorP99": _safe_q(abs_error, 0.99),
+        "MaxError": float(np.max(abs_error)),
+    }
+
+
+def flatten_detection_metrics(prefix: str, metrics: dict) -> dict:
+    """Return Trainer-compatible names for a binary detection metric block."""
+    return {
+        f"TempRecallAbove{prefix}": metrics["recall"],
+        f"TempPrecisionAbove{prefix}": metrics["precision"],
+        f"TempF1Above{prefix}": metrics["f1"],
+        f"TempIoUAbove{prefix}": metrics["iou"],
+        f"TempTPAbove{prefix}": metrics["true_positive"],
+        f"TempFPAbove{prefix}": metrics["false_positive"],
+        f"TempFNAbove{prefix}": metrics["false_negative"],
+    }
+
+
+def time_scale_to_seconds(config) -> float:
+    physics = getattr(config, "physics", None)
+    return float(getattr(physics, "time_scale_to_s", 1.0e-3))
+
+
+def build_path_model(config):
+    mode = str(getattr(config.data, "laser_path_mode", "estimated"))
+    if mode == "estimated":
+        return None
+    try:
+        return AdditiveZScanPath.from_config(config)
+    except Exception as exc:  # noqa: BLE001 - diagnostic output should survive partial configs.
+        print(f"  [WARN] Could not build additive_z_scan path model: {exc}")
+        return None
+
+
+def laser_region_mask_for_record(rec: dict, config) -> torch.Tensor | None:
+    """Mask valid nodes inside the target-step laser influence region."""
+    target_laser_pos = rec.get("target_laser_pos")
+    if target_laser_pos is None:
+        return None
+
+    coords = rec["coords"].detach().float().cpu()
+    valid = rec["valid_mask"].detach().bool().cpu()
+    laser = target_laser_pos.detach().float().reshape(1, 3).cpu()
+    rel = coords - laser
+    radius = float(getattr(config.data, "laser_feature_radius_mm", 0.4))
+    depth = float(getattr(config.data, "laser_feature_depth_mm", 0.1))
+    dxy = torch.linalg.vector_norm(rel[:, :2], dim=1)
+    dz = rel[:, 2].abs()
+    return valid & (dxy <= radius) & (dz <= depth)
+
+
+def compute_laser_region_metrics(records: list[dict], config) -> dict:
+    """Compute pooled metrics inside the target-step laser influence region."""
+    preds: list[np.ndarray] = []
+    targets: list[np.ndarray] = []
+    for rec in records:
+        mask = laser_region_mask_for_record(rec, config)
+        if mask is None or not bool(mask.any()):
+            continue
+        valid_positions = torch.nonzero(rec["valid_mask"], as_tuple=False).reshape(-1)
+        region_valid_idx = torch.nonzero(mask[valid_positions], as_tuple=False).reshape(-1)
+        if region_valid_idx.numel() == 0:
+            continue
+        preds.append(rec["pred"][region_valid_idx].detach().cpu().numpy())
+        targets.append(rec["target"][region_valid_idx].detach().cpu().numpy())
+
+    if not preds:
+        return {"count": 0}
+    return compute_regression_metrics(np.concatenate(preds), np.concatenate(targets))
+
+
+def path_features_for_node(path_model, config, coord_mm: np.ndarray,
+                           raw_time: float) -> dict:
+    """Return selected process-path features for one node/time pair."""
+    if path_model is None:
+        return {}
+    try:
+        features, columns = path_model.node_process_features(
+            np.asarray(coord_mm, dtype=np.float64).reshape(1, 3),
+            float(raw_time),
+        )
+    except Exception as exc:  # noqa: BLE001 - keep evaluation robust for old configs.
+        return {"laser_path_error": str(exc)}
+
+    row = features[0]
+    values = {name: float(row[i]) for i, name in enumerate(columns)}
+    return {
+        "laser_position_mm": [
+            values.get("laser_x_mm"),
+            values.get("laser_y_mm"),
+            values.get("laser_z_mm"),
+        ],
+        "distance_to_laser_mm": values.get("distance_to_laser_mm"),
+        "current_along_mm": values.get("current_along_mm"),
+        "current_cross_mm": values.get("current_cross_mm"),
+        "line_along_mm": values.get("line_along_mm"),
+        "line_cross_mm": values.get("line_cross_mm"),
+        "time_to_arrival_s": values.get("time_to_arrival_s"),
+        "arrival_raw_time": values.get("arrival_raw_time"),
+        "layer_idx": values.get("layer_idx"),
+        "track_physical": values.get("track_physical"),
+        "track_program": values.get("track_program"),
+        "direction_sign": values.get("direction_sign"),
+        "in_track_neighborhood": values.get("in_track_neighborhood"),
+    }
+
+
+def collect_worst_cases(records: list[dict], config, *, top_k: int = 10) -> list[dict]:
+    """Collect the worst pointwise errors with path-alignment diagnostics."""
+    candidates: list[dict] = []
+    path_model = build_path_model(config)
+    seconds_scale = time_scale_to_seconds(config)
+
+    optional_fields = [
+        "hotspot_prob",
+        "hotspot_specialist_temp",
+        "hotspot_specialist_gate",
+        "process_gate",
+        "laser_target_heat_gate",
+        "laser_body_heat_gate",
+        "laser_path_body_heat_gate",
+        "laser_path_wake_gate",
+        "laser_sweep_heat_gate",
+        "laser_arrival_gate",
+        "laser_path_active_gate",
+        "laser_path_pre_arrival_gate",
+        "laser_path_post_arrival_gate",
+        "laser_endpoint_gate",
+        "laser_path_program_track_gate",
+        "laser_path_elapsed_gate",
+        "laser_path_time_until_gate",
+        "laser_path_scanned_gate",
+        "laser_path_cooling_tail_gate",
+        "neighbor_hot_gate",
+        "hotspot_laser_prior_temp",
+        "hotspot_laser_prior_gate",
+        "laser_residual_prior_gate",
+        "laser_residual_learned_gate",
+        "laser_residual_control_gate",
+        "laser_residual_cold_start_gate",
+        "laser_residual_gate",
+        "laser_residual_delta",
+        "laser_residual_boost",
+        "cold_to_hot_gate",
+    ]
+
+    for rec in records:
+        abs_err = (rec["pred"] - rec["target"]).abs()
+        if abs_err.numel() == 0:
+            continue
+        local_k = min(top_k, int(abs_err.numel()))
+        values, indices = torch.topk(abs_err, k=local_k)
+        valid_positions = torch.nonzero(rec["valid_mask"], as_tuple=False).reshape(-1)
+        for rank_value, valid_idx in zip(values.tolist(), indices.tolist()):
+            node_idx = int(valid_positions[int(valid_idx)].item())
+            coord = rec["coords"][node_idx].detach().float().cpu().numpy()
+            raw_time = float(rec["target_time"])
+            row = {
+                "abs_error": float(rank_value),
+                "prediction": float(rec["pred"][valid_idx].item()),
+                "target": float(rec["target"][valid_idx].item()),
+                "node_index": node_idx,
+                "target_step": int(rec["target_step"]),
+                "target_time_raw": raw_time,
+                "target_time_s": raw_time * seconds_scale if raw_time > 0 else None,
+                "coord_mm": [float(v) for v in coord.tolist()],
+            }
+            target_laser_pos = rec.get("target_laser_pos")
+            if target_laser_pos is not None:
+                laser = target_laser_pos.detach().float().cpu().numpy().reshape(3)
+                row["target_laser_position_mm"] = [float(v) for v in laser.tolist()]
+                row["target_laser_distance_mm"] = float(np.linalg.norm(coord - laser))
+            row.update(path_features_for_node(path_model, config, coord, raw_time))
+            for field in optional_fields:
+                value = rec.get(field)
+                if value is not None:
+                    row[field] = float(value[valid_idx].item())
+            candidates.append(row)
+
+    candidates.sort(key=lambda item: item["abs_error"], reverse=True)
+    return candidates[:top_k]
 
 
 def find_neighbors(edge_index: torch.Tensor, center_node: int,
@@ -1176,12 +1390,37 @@ def main():
     # 6. High-temperature detection
     # ------------------------------------------------------------------
     det = bin_results.get("_detection", {})
+    liquidus_det = compute_score_detection_metrics(
+        all_preds.numpy(), all_targets.numpy(), liquidus, liquidus
+    )
+    canonical_metrics = dict(all_b)
+    canonical_metrics.update(flatten_detection_metrics(
+        "Solidus", {
+            "recall": det.get("recall_above_solidus", 0.0),
+            "precision": det.get("precision_above_solidus", 0.0),
+            "f1": det.get("f1_above_solidus", 0.0),
+            "iou": det.get("iou_above_solidus", 0.0),
+            "true_positive": det.get("true_positive", 0),
+            "false_positive": det.get("false_positive", 0),
+            "false_negative": det.get("false_negative", 0),
+        }
+    ))
+    canonical_metrics.update(flatten_detection_metrics(
+        "Liquidus", liquidus_det
+    ))
     print(f"\n--- High-Temperature Detection (threshold = solidus {solidus} °C) ---")
     print(f"  Recall above solidus    : {det.get('recall_above_solidus', 0):.4f}")
     print(f"  Precision above solidus : {det.get('precision_above_solidus', 0):.4f}")
     print(f"  F1 above solidus        : {det.get('f1_above_solidus', 0):.4f}")
     print(f"  IoU above solidus       : {det.get('iou_above_solidus', 0):.4f}")
     print(f"  TP={det.get('true_positive', 0)}, FP={det.get('false_positive', 0)}, FN={det.get('false_negative', 0)}")
+
+    print(f"\n--- High-Temperature Detection (threshold = liquidus {liquidus} C) ---")
+    print(f"  Recall above liquidus    : {liquidus_det['recall']:.4f}")
+    print(f"  Precision above liquidus : {liquidus_det['precision']:.4f}")
+    print(f"  F1 above liquidus        : {liquidus_det['f1']:.4f}")
+    print(f"  IoU above liquidus       : {liquidus_det['iou']:.4f}")
+    print(f"  TP={liquidus_det['true_positive']}, FP={liquidus_det['false_positive']}, FN={liquidus_det['false_negative']}")
 
     cls_det = None
     if all_hot_probs is not None:
@@ -1194,6 +1433,24 @@ def main():
         print(f"  F1 above solidus        : {cls_det['f1']:.4f}")
         print(f"  IoU above solidus       : {cls_det['iou']:.4f}")
         print(f"  TP={cls_det['true_positive']}, FP={cls_det['false_positive']}, FN={cls_det['false_negative']}")
+
+    laser_region_metrics = compute_laser_region_metrics(records, config)
+    print("\n--- Target Laser Influence Region ---")
+    if laser_region_metrics.get("count", 0) > 0:
+        canonical_metrics.update({
+            f"LaserRegion{key}": value
+            for key, value in laser_region_metrics.items()
+            if key != "count"
+        })
+        canonical_metrics["LaserRegionCount"] = laser_region_metrics["count"]
+        print(f"  Count    : {laser_region_metrics['count']:,}")
+        print(f"  MAE      : {laser_region_metrics['MAE']:.2f}")
+        print(f"  RMSE     : {laser_region_metrics['RMSE']:.2f}")
+        print(f"  P95/P99  : {laser_region_metrics['AbsErrorP95']:.2f} / {laser_region_metrics['AbsErrorP99']:.2f}")
+        print(f"  MaxError : {laser_region_metrics['MaxError']:.2f}")
+    else:
+        canonical_metrics["LaserRegionCount"] = 0
+        print("  No valid nodes fell inside the configured laser influence region.")
 
     # ------------------------------------------------------------------
     # 7. Per-timestep max temperature
@@ -1225,6 +1482,7 @@ def main():
     print("WORST-CASE NODE DIAGNOSTIC")
     print("=" * 90)
     worst = analyze_worst_case(records, graph, config)
+    worst_cases_top10 = collect_worst_cases(records, config, top_k=10)
 
     if worst:
         diag = worst.get("diagnostic", {})
@@ -1319,6 +1577,22 @@ def main():
             print(f"  2nd-order neighbour temps (sample of {len(n2)}): "
                   f"min={min(vals):.1f}  max={max(vals):.1f}  mean={np.mean(vals):.1f}")
 
+        if worst_cases_top10:
+            print("\n  Worst 10 point errors:")
+            for rank, item in enumerate(worst_cases_top10, start=1):
+                dist = item.get("target_laser_distance_mm")
+                if dist is None:
+                    dist = item.get("distance_to_laser_mm")
+                tta = item.get("time_to_arrival_s")
+                dist_text = "N/A" if dist is None else f"{dist:.3f} mm"
+                tta_text = "N/A" if tta is None else f"{tta:.6f} s"
+                print(
+                    f"    #{rank:02d} step={item['target_step']} "
+                    f"node={item['node_index']} err={item['abs_error']:.2f} "
+                    f"pred/target={item['prediction']:.2f}/{item['target']:.2f} "
+                    f"laser_dist={dist_text} arrival={tta_text}"
+                )
+
         # ------------------------------------------------------------------
         # 9. Export VTU for the worst time step
         # ------------------------------------------------------------------
@@ -1341,12 +1615,15 @@ def main():
         "solidus": solidus,
         "liquidus": liquidus,
         "global_metrics": all_b,
+        "canonical_metrics": canonical_metrics,
         "per_bin_metrics": {
             label: bin_results.get(label, {})
             for label, _, _ in BIN_DEFS
         },
         "detection_metrics": det,
+        "liquidus_detection_metrics": liquidus_det,
         "hotspot_head_detection_metrics": cls_det,
+        "laser_region_metrics": laser_region_metrics,
         "per_timestep_max_summary": {
             "num_steps": len(ts_rows),
             "true_max_range": [float(min(true_maxes)), float(max(true_maxes))],
@@ -1354,7 +1631,9 @@ def main():
             "max_abs_error": float(max(max_errs)),
             "mean_abs_error": float(np.mean(max_errs)),
         },
+        "per_timestep_max": ts_rows,
         "worst_case": worst,
+        "worst_cases_top10": worst_cases_top10,
     }
     report_path = os.path.join(args.output_dir, "evaluation_report.json")
     with open(report_path, "w", encoding="utf-8") as f:
