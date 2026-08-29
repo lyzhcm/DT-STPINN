@@ -53,3 +53,20 @@ Interpretation:
 - This makes the trajectory timing and physical/program track convention a high-priority check before judging E1/E2/E3 failures. If feature ablations do not improve solidus recall, inspect whether the intended path convention should place this node closer to physical track 1/program track 102 near this raw time.
 
 Generated CSV/JSON files were written under `results/laser_trajectory_step2128_smoke`, which is ignored by git.
+
+Visualization smoke:
+
+```powershell
+F:\anaconda3\envs\dtstpinn\python.exe scripts\plot_laser_hotspots.py --config configs\feature_e3_path_phase.yaml --vtu_dir F:\VTU --steps 2128 --output_dir results\laser_hotspot_alignment_smoke --top_k 200 --show_all_nodes --zoom_radius_mm 2.0
+```
+
+Plot summary:
+
+| Field | Value |
+|---|---:|
+| Hot nodes above solidus | 3 |
+| Hottest node temperature | 2370.95 C |
+| Hottest node distance to laser | 0.8371 mm |
+| Nearest plotted hot-node distance to laser | 0.788 mm |
+
+The local zoom plot confirms the numerical diagnosis: the high-temperature nodes are close to the scan line but ahead of the current laser ellipsoid at sample 2128. The PNG and per-step CSV are generated under `results/laser_hotspot_alignment_smoke`, which is ignored by git.
