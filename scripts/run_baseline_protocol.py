@@ -18,6 +18,8 @@ from src.config import Config
 
 
 def display_command(cmd: list[str]) -> str:
+    if sys.platform == "win32":
+        return subprocess.list2cmdline([str(part) for part in cmd])
     return shlex.join(str(part) for part in cmd)
 
 
@@ -103,7 +105,7 @@ def build_freeze_command(
             raise FileNotFoundError(f"Cannot freeze missing checkpoint: {checkpoint}")
         if not report.is_file():
             raise FileNotFoundError(f"Cannot freeze missing evaluation report: {report}")
-    return [
+    cmd = [
         args.python,
         "scripts/freeze_baseline.py",
         "--name",
@@ -127,6 +129,9 @@ def build_freeze_command(
         "--output_dir",
         args.output_dir,
     ]
+    if args.split_indices:
+        cmd.extend(["--split_indices", args.split_indices])
+    return cmd
 
 
 def parse_args() -> argparse.Namespace:

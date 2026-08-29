@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config import Config
-from src.data.preprocessing import split_indices
+from src.data.preprocessing import load_split_indices, split_indices
 from src.data.vtu_loader import VTULoader
 
 
@@ -51,6 +51,23 @@ def copy_artifact(src: Path, dst_dir: Path) -> dict[str, object]:
     }
 
 
+def copy_optional_artifact(
+    src: Path, dst_dir: Path, *, dst_name: str | None = None
+) -> dict[str, object]:
+    """Copy an optional artifact and keep source/hash metadata."""
+    if not src.is_file():
+        raise FileNotFoundError(src)
+    dst = dst_dir / (dst_name or src.name)
+    if src.resolve() != dst.resolve():
+        shutil.copy2(src, dst)
+    return {
+        "source": str(src),
+        "frozen_path": str(dst),
+        "bytes": dst.stat().st_size,
+        "sha256": sha256_file(dst),
+    }
+
+
 def summarize_split(indices: list[int]) -> dict[str, object]:
     if not indices:
         return {"count": 0, "first": None, "last": None}
@@ -64,6 +81,14 @@ def main() -> None:
     parser.add_argument("--checkpoint", required=True, help="Best checkpoint path to freeze")
     parser.add_argument("--test_report", required=True, help="test_metrics.json or evaluation report")
     parser.add_argument("--vtu_dir", default=None, help="VTU directory used by the run")
+    parser.add_argument(
+        "--split_indices",
+        default=None,
+        help=(
+            "Frozen split_indices.json used by training/evaluation. "
+            "If omitted, the split is rebuilt from config ratios."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--train_command", default="", help="Original training command, if known")
     parser.add_argument("--eval_command", default="", help="Original evaluation command, if known")
@@ -81,11 +106,18 @@ def main() -> None:
     if loader.num_steps == 0:
         raise SystemExit(f"No VTU files found in {vtu_dir}")
 
-    train_idx, val_idx, test_idx = split_indices(
-        loader.num_steps,
-        train_ratio=config.data.train_split,
-        val_ratio=config.data.val_split,
-    )
+    if args.split_indices:
+        split_source = f"frozen:{args.split_indices}"
+        train_idx, val_idx, test_idx = load_split_indices(
+            args.split_indices, total_steps=loader.num_steps
+        )
+    else:
+        split_source = "ratio"
+        train_idx, val_idx, test_idx = split_indices(
+            loader.num_steps,
+            train_ratio=config.data.train_split,
+            val_ratio=config.data.val_split,
+        )
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_dir = Path(args.output_dir) / f"{args.name}_{stamp}"
@@ -99,6 +131,8 @@ def main() -> None:
 
     split_payload = {
         "protocol": "contiguous chronological split over VTU sequence",
+        "source": split_source,
+        "source_path": args.split_indices,
         "num_steps": loader.num_steps,
         "train_split": config.data.train_split,
         "val_split": config.data.val_split,
@@ -116,6 +150,12 @@ def main() -> None:
     }
     split_path = out_dir / "split_indices.json"
     split_path.write_text(json.dumps(split_payload, indent=2) + "\n", encoding="utf-8")
+
+    source_split = None
+    if args.split_indices:
+        source_split = copy_optional_artifact(
+            Path(args.split_indices), out_dir, dst_name="source_split_indices.json"
+        )
 
     manifest = {
         "name": args.name,
@@ -135,6 +175,8 @@ def main() -> None:
         "split_indices": {
             "path": str(split_path),
             "sha256": sha256_file(split_path),
+            "source": split_source,
+            "source_artifact": source_split,
             "summary": split_payload["summary"],
         },
         "notes": args.notes,
@@ -150,4 +192,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

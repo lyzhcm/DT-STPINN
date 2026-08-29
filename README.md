@@ -83,7 +83,7 @@ python scripts\run_baseline_protocol.py `
   --dry_run
 ```
 
-Remove `--dry_run` to launch the long run. The wrapper trains with `scripts/train.py`, evaluates `best_model.pt` with `scripts/evaluate_checkpoint.py`, then freezes the checkpoint, config, evaluation report, split, seed, git commit, and commands with `scripts/freeze_baseline.py`.
+Remove `--dry_run` to launch the long run. The wrapper trains with `scripts/train.py`, evaluates `best_model.pt` with `scripts/evaluate_checkpoint.py`, then freezes the checkpoint, config, evaluation report, split, seed, git commit, and commands with `scripts/freeze_baseline.py`. When `--split_indices` is provided, the freeze manifest records that exact frozen split as the source protocol.
 
 ```powershell
 python scripts\evaluate_checkpoint.py `
