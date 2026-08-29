@@ -5,6 +5,9 @@ and laser position estimation.
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import torch
 import numpy as np
 
@@ -76,6 +79,43 @@ def split_indices(total_steps: int, train_ratio: float = 0.7,
     val = indices[n_train:n_train + n_val]
     test = indices[n_train + n_val:]
     return train, val, test
+
+
+def load_split_indices(path: str | Path, total_steps: int | None = None) -> tuple[list[int], list[int], list[int]]:
+    """Load and validate a frozen train/val/test split JSON file."""
+    split_path = Path(path)
+    payload = json.loads(split_path.read_text(encoding="utf-8"))
+    try:
+        train = [int(i) for i in payload["train"]]
+        val = [int(i) for i in payload["val"]]
+        test = [int(i) for i in payload["test"]]
+    except KeyError as exc:
+        raise ValueError(f"Split file {split_path} is missing key: {exc}") from exc
+
+    all_indices = train + val + test
+    if len(all_indices) != len(set(all_indices)):
+        raise ValueError(f"Split file {split_path} contains duplicate time indices.")
+    if any(i < 0 for i in all_indices):
+        raise ValueError(f"Split file {split_path} contains negative time indices.")
+    if total_steps is not None and any(i >= total_steps for i in all_indices):
+        raise ValueError(
+            f"Split file {split_path} contains indices outside total_steps={total_steps}."
+        )
+    return train, val, test
+
+
+def load_or_build_split_indices(
+    total_steps: int,
+    train_ratio: float = 0.7,
+    val_ratio: float = 0.15,
+    split_indices_path: str | Path | None = None,
+) -> tuple[list[int], list[int], list[int], str]:
+    """Return train/val/test indices plus a protocol-source label."""
+    if split_indices_path:
+        train, val, test = load_split_indices(split_indices_path, total_steps=total_steps)
+        return train, val, test, f"frozen:{Path(split_indices_path)}"
+    train, val, test = split_indices(total_steps, train_ratio=train_ratio, val_ratio=val_ratio)
+    return train, val, test, "ratio"
 
 
 def extract_mesh_edges(cells: list[tuple[str, np.ndarray]]) -> tuple[np.ndarray, np.ndarray]:

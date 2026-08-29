@@ -68,13 +68,16 @@ python scripts\train.py `
 
 Use `scripts/evaluate_checkpoint.py` as the single checkpoint evaluation protocol. It reports global regression metrics, solidus/liquidus detection metrics, laser-region errors, per-step peak-temperature errors, and worst-point diagnostics.
 
+For long comparisons, reuse the frozen baseline split file in both training and evaluation. The baseline freeze script writes it as `artifacts/baselines/<baseline_name>/split_indices.json`; the artifact directory stays local, but the path should be recorded in experiment notes.
+
 ```powershell
 python scripts\evaluate_checkpoint.py `
   --config configs\feature_e0_baseline.yaml `
   --checkpoint logs\feature_e0_baseline\best_model.pt `
   --vtu_dir F:\VTU `
   --output_dir logs\feature_e0_baseline `
-  --graph_device cuda
+  --graph_device cuda `
+  --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json
 ```
 
 Required acceptance metrics for every long run:
@@ -101,6 +104,7 @@ python scripts\run_feature_ablation.py `
   --vtu_dir F:\VTU `
   --epochs 50 `
   --graph_device cuda `
+  --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
   --resume_from_last `
   --dry_run
 ```
@@ -113,6 +117,7 @@ python scripts\run_feature_ablation.py `
   --vtu_dir F:\VTU `
   --epochs 50 `
   --graph_device cuda `
+  --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
   --resume_from_last
 ```
 
@@ -123,6 +128,7 @@ python scripts\run_feature_ablation.py `
   --vtu_dir F:\VTU `
   --epochs 50 `
   --graph_device cuda `
+  --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
   --resume_from_last
 ```
 
@@ -139,6 +145,7 @@ python scripts\run_feature_ablation.py `
   --vtu_dir F:\VTU `
   --epochs 50 `
   --graph_device cuda `
+  --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
   --resume_from_last
 ```
 

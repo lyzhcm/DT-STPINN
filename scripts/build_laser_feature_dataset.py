@@ -12,7 +12,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config import Config
-from src.data.preprocessing import split_indices
+from src.data.preprocessing import load_or_build_split_indices
 from src.data.vtu_loader import VTULoader
 from src.utils.laser_path import AdditiveZScanPath
 
@@ -45,15 +45,22 @@ def raw_time_from_file(path: Path, fallback: int) -> float:
     return float(match.group(1)) if match else float(fallback)
 
 
-def select_steps(config: Config, raw_times: list[float], selector: str, explicit: str | None) -> list[int]:
+def select_steps(
+    config: Config,
+    raw_times: list[float],
+    selector: str,
+    explicit: str | None,
+    split_indices_path: str | None,
+) -> tuple[list[int], str]:
     eligible = list(range(config.data.window_size, max(config.data.window_size, len(raw_times))))
     if explicit:
         wanted = {int(v.strip()) for v in explicit.split(",") if v.strip()}
-        return [i for i in eligible if i in wanted]
-    train_idx, val_idx, test_idx = split_indices(
+        return [i for i in eligible if i in wanted], "explicit steps"
+    train_idx, val_idx, test_idx, split_source = load_or_build_split_indices(
         len(raw_times),
         train_ratio=config.data.train_split,
         val_ratio=config.data.val_split,
+        split_indices_path=split_indices_path,
     )
     split_map = {
         "all": eligible,
@@ -64,7 +71,7 @@ def select_steps(config: Config, raw_times: list[float], selector: str, explicit
     if selector not in split_map:
         raise ValueError(f"Unknown step selector {selector!r}")
     selected = set(split_map[selector])
-    return [i for i in eligible if i in selected]
+    return [i for i in eligible if i in selected], split_source
 
 
 def make_path(args, config: Config) -> AdditiveZScanPath:
@@ -86,6 +93,11 @@ def main() -> None:
     parser.add_argument("--vtu_dir", required=True)
     parser.add_argument("--output_dir", default="data/processed/laser_features")
     parser.add_argument("--split", choices=["all", "train", "val", "test"], default="all")
+    parser.add_argument(
+        "--split_indices",
+        default=None,
+        help="Frozen split_indices.json from scripts/freeze_baseline.py.",
+    )
     parser.add_argument("--steps", default=None, help="Comma-separated target step indices; overrides --split")
     parser.add_argument("--max_steps", type=int, default=None)
     parser.add_argument("--dtype", choices=["float32", "float64"], default="float32")
@@ -101,7 +113,7 @@ def main() -> None:
     raw_times = [raw_time_from_file(fp, i) for i, fp in enumerate(loader.files)]
     raw_origin = raw_times[0]
     path = make_path(args, config)
-    steps = select_steps(config, raw_times, args.split, args.steps)
+    steps, split_source = select_steps(config, raw_times, args.split, args.steps, args.split_indices)
     if args.max_steps is not None:
         steps = steps[:args.max_steps]
 
@@ -114,6 +126,9 @@ def main() -> None:
         "raw_origin": raw_origin,
         "num_nodes": int(coords.shape[0]),
         "num_vtu_steps": len(raw_times),
+        "split": args.split,
+        "split_source": split_source,
+        "split_indices": args.split_indices,
         "target_steps": steps,
         "dtype": args.dtype,
         "feature_groups": FEATURE_GROUPS,

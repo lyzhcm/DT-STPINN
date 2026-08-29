@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.config import Config, MaterialProps
 from src.data.vtu_loader import VTULoader
 from src.data.dataset import DEDTemporalDataset, StratifiedWindowSampler, collate_temporal_batch
-from src.data.preprocessing import split_indices
+from src.data.preprocessing import load_or_build_split_indices
 from src.graph_builder.dynamic_graph import DynamicGraph
 from src.model import DTSTPINN
 from src.trainer import Trainer
@@ -144,6 +144,12 @@ def main():
     parser.add_argument("--rebuild_cache", action="store_true")
     parser.add_argument("--resume", type=str, default=None,
                         help="Resume from a saved training checkpoint.")
+    parser.add_argument(
+        "--split_indices",
+        type=str,
+        default=None,
+        help="Frozen split_indices.json from scripts/freeze_baseline.py.",
+    )
     parser.add_argument(
         "--experiment_name",
         type=str,
@@ -276,12 +282,16 @@ def main():
         ) / 1e9
         print(f"Approx graph tensor memory on GPU: {graph_mem_gb:.2f} GB")
 
-    train_idx, val_idx, test_idx = split_indices(
+    train_idx, val_idx, test_idx, split_source = load_or_build_split_indices(
         graph.num_steps,
         train_ratio=config.data.train_split,
         val_ratio=config.data.val_split,
+        split_indices_path=args.split_indices,
     )
-    print(f"Split: train={len(train_idx)}, val={len(val_idx)}, test={len(test_idx)}")
+    print(
+        f"Split: train={len(train_idx)}, val={len(val_idx)}, test={len(test_idx)} "
+        f"({split_source})"
+    )
 
     train_dataset = DEDTemporalDataset(
         graph,

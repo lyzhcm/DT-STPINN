@@ -39,7 +39,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.config import Config
 from src.data.vtu_loader import VTULoader
 from src.data.dataset import DEDTemporalDataset, collate_temporal_batch
-from src.data.preprocessing import split_indices
+from src.data.preprocessing import load_or_build_split_indices
 from src.graph_builder.dynamic_graph import DynamicGraph
 from src.model import DTSTPINN
 from src.utils.laser_path import AdditiveZScanPath
@@ -1154,6 +1154,12 @@ def main():
     parser.add_argument("--no_cache", action="store_true")
     parser.add_argument("--rebuild_cache", action="store_true")
     parser.add_argument(
+        "--split_indices",
+        type=str,
+        default=None,
+        help="Frozen split_indices.json from scripts/freeze_baseline.py.",
+    )
+    parser.add_argument(
         "--graph_device",
         type=str,
         default="auto",
@@ -1237,11 +1243,13 @@ def main():
     print(f"  Moving graph tensors to {graph_device}.")
     graph.to(graph_device)
 
-    _, _, test_idx = split_indices(
+    _, _, test_idx, split_source = load_or_build_split_indices(
         graph.num_steps,
         train_ratio=config.data.train_split,
         val_ratio=config.data.val_split,
+        split_indices_path=args.split_indices,
     )
+    print(f"  Split source: {split_source}")
     print(f"  Test steps: {test_idx[0]} – {test_idx[-1]} ({len(test_idx)} steps)")
 
     test_dataset = DEDTemporalDataset(

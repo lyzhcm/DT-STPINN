@@ -99,6 +99,8 @@ def build_train_command(args: argparse.Namespace, exp: Experiment, run_name: str
         cmd.extend(["--device", args.device])
     if args.cache_dir != "data/processed":
         cmd.extend(["--cache_dir", args.cache_dir])
+    if args.split_indices:
+        cmd.extend(["--split_indices", args.split_indices])
     cmd.extend(optional_limit_args(args))
 
     last_checkpoint = Path("logs") / run_name / "last_model.pt"
@@ -115,7 +117,7 @@ def build_eval_command(args: argparse.Namespace, exp: Experiment, run_name: str)
             f"Expected checkpoint for {run_name}: {checkpoint}. "
             "Use --skip_train only after the checkpoint exists."
         )
-    return [
+    cmd = [
         args.python,
         "scripts/evaluate_checkpoint.py",
         "--config",
@@ -129,6 +131,9 @@ def build_eval_command(args: argparse.Namespace, exp: Experiment, run_name: str)
         "--graph_device",
         args.graph_device,
     ]
+    if args.split_indices:
+        cmd.extend(["--split_indices", args.split_indices])
+    return cmd
 
 
 def build_summary_command(args: argparse.Namespace) -> list[str]:
@@ -162,6 +167,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--graph_device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--cache_dir", default="data/processed")
+    parser.add_argument(
+        "--split_indices",
+        default=None,
+        help="Frozen split_indices.json to reuse across all experiments.",
+    )
     parser.add_argument(
         "--checkpoint_name",
         default=None,
@@ -202,6 +212,7 @@ def main() -> None:
     print(f"  VTU dir     : {args.vtu_dir}")
     print(f"  Epochs      : {args.epochs}")
     print(f"  Seed        : {args.seed}")
+    print(f"  Split       : {args.split_indices or 'ratio from config'}")
     checkpoint_label = args.checkpoint_name or "protocol default"
     print(f"  Checkpoint  : {checkpoint_label}")
     print(f"  Dry run     : {args.dry_run}")

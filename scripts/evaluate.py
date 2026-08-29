@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.config import Config
 from src.data.vtu_loader import VTULoader
 from src.data.dataset import DEDTemporalDataset, collate_temporal_batch
-from src.data.preprocessing import split_indices
+from src.data.preprocessing import load_or_build_split_indices
 from src.graph_builder.dynamic_graph import DynamicGraph
 from src.model import DTSTPINN
 from src.trainer import Trainer
@@ -34,6 +34,12 @@ def main():
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--autoregressive_steps", type=int, default=0)
     parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument(
+        "--split_indices",
+        type=str,
+        default=None,
+        help="Frozen split_indices.json from scripts/freeze_baseline.py.",
+    )
     args = parser.parse_args()
 
     config = Config.from_yaml(args.config)
@@ -56,11 +62,13 @@ def main():
     if config.data.laser_path_mode != "estimated":
         print(f"Laser path mode: {config.data.laser_path_mode}")
 
-    _, _, test_idx = split_indices(
+    _, _, test_idx, split_source = load_or_build_split_indices(
         graph.num_steps,
         train_ratio=config.data.train_split,
         val_ratio=config.data.val_split,
+        split_indices_path=args.split_indices,
     )
+    print(f"Test split: {len(test_idx)} steps ({split_source})")
 
     test_dataset = DEDTemporalDataset(
         graph,

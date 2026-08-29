@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from scripts.train import graph_cache_path, load_graph_cache, save_graph_cache
 from src.config import Config, MaterialProps
 from src.data.dataset import DEDTemporalDataset
-from src.data.preprocessing import split_indices
+from src.data.preprocessing import load_or_build_split_indices
 from src.data.vtu_loader import VTULoader
 from src.graph_builder.dynamic_graph import DynamicGraph
 
@@ -69,6 +69,12 @@ def parse_args() -> argparse.Namespace:
                         help="Report how well XML-derived process gates cover true solidus nodes.")
     parser.add_argument("--gate_split", choices=["train", "val", "test", "all"], default="test",
                         help="Temporal split used for --gate_coverage.")
+    parser.add_argument(
+        "--split_indices",
+        type=str,
+        default=None,
+        help="Frozen split_indices.json used for gate diagnostics.",
+    )
     parser.add_argument("--gate_thresholds", type=float, nargs="*",
                         default=[0.0001, 0.001, 0.003, 0.01, 0.03, 0.1, 0.2, 0.5],
                         help="Gate thresholds to score.")
@@ -486,14 +492,21 @@ def print_focus_node_windows(graph: DynamicGraph, config: Config, *,
             )
 
 
-def gate_target_steps(graph: DynamicGraph, config: Config, split_name: str) -> list[int]:
+def gate_target_steps(
+        graph: DynamicGraph,
+        config: Config,
+        split_name: str,
+        split_indices_path: str | None = None,
+        ) -> tuple[list[int], str]:
     if split_name == "all":
         source_indices = list(range(graph.num_steps))
+        split_source = "all"
     else:
-        train_idx, val_idx, test_idx = split_indices(
+        train_idx, val_idx, test_idx, split_source = load_or_build_split_indices(
             graph.num_steps,
             train_ratio=config.data.train_split,
             val_ratio=config.data.val_split,
+            split_indices_path=split_indices_path,
         )
         source_indices = {
             "train": train_idx,
@@ -508,7 +521,7 @@ def gate_target_steps(graph: DynamicGraph, config: Config, split_name: str) -> l
         target = int(start) + window_size + predict_steps - 1
         if target < graph.num_steps:
             targets.append(target)
-    return targets
+    return targets, split_source
 
 
 def target_laser_heat(coords: torch.Tensor, laser: torch.Tensor, scan_angle: torch.Tensor,
@@ -748,7 +761,8 @@ def report_gate_confusion(graph: DynamicGraph, config: Config, *, split_name: st
                           device_name: str, cold_threshold: float,
                           output_dir: str | None, top_k: int,
                           raw_time_min: float | None = None,
-                          raw_time_max: float | None = None) -> None:
+                          raw_time_max: float | None = None,
+                          split_indices_path: str | None = None) -> None:
     if config.data.laser_path_mode != "additive_z_scan":
         print("\nGate confusion skipped: laser_path_mode is not additive_z_scan.")
         return
@@ -763,7 +777,9 @@ def report_gate_confusion(graph: DynamicGraph, config: Config, *, split_name: st
     graph.apply_laser_path_config(config.data)
     diag_dataset = make_diag_dataset(graph, config)
 
-    targets = gate_target_steps(graph, config, split_name)
+    targets, split_source = gate_target_steps(
+        graph, config, split_name, split_indices_path=split_indices_path
+    )
     if raw_time_min is not None or raw_time_max is not None:
         filtered_targets = []
         for target in targets:
@@ -826,6 +842,7 @@ def report_gate_confusion(graph: DynamicGraph, config: Config, *, split_name: st
         f"\nGate confusion ({split_name}): {len(targets)} windows, "
         f"solidus>={solidus:.1f} C, cold<={cold_threshold:.1f} C"
     )
+    print(f"  split source: {split_source}")
     if raw_time_min is not None or raw_time_max is not None:
         print(f"  raw time filter: min={raw_time_min}, max={raw_time_max}")
 
@@ -1070,7 +1087,8 @@ def report_gate_confusion(graph: DynamicGraph, config: Config, *, split_name: st
 
 def report_gate_coverage(graph: DynamicGraph, config: Config, *, split_name: str,
                          thresholds: list[float], chunk_nodes: int,
-                         device_name: str) -> None:
+                         device_name: str,
+                         split_indices_path: str | None = None) -> None:
     if config.data.laser_path_mode != "additive_z_scan":
         print("\nGate coverage skipped: laser_path_mode is not additive_z_scan.")
         return
@@ -1089,7 +1107,9 @@ def report_gate_coverage(graph: DynamicGraph, config: Config, *, split_name: str
     ):
         setattr(graph, f"_diag_{name}", getattr(config.data, name))
 
-    targets = gate_target_steps(graph, config, split_name)
+    targets, split_source = gate_target_steps(
+        graph, config, split_name, split_indices_path=split_indices_path
+    )
     thresholds = sorted(float(t) for t in thresholds)
     radius = torch.as_tensor(float(config.data.laser_feature_radius_mm), device=device, dtype=graph.coords.dtype)
     along_radius = torch.as_tensor(
@@ -1115,6 +1135,7 @@ def report_gate_coverage(graph: DynamicGraph, config: Config, *, split_name: str
     final_hot_scores = []
 
     print(f"\nXML gate coverage ({split_name}, {len(targets)} target windows, device={device}):")
+    print(f"  split source: {split_source}")
     for idx, target_step in enumerate(targets, start=1):
         target = graph.temperatures[target_step]
         if target.ndim > 1:
@@ -1377,6 +1398,7 @@ def main() -> None:
             thresholds=args.gate_thresholds,
             chunk_nodes=args.gate_chunk_nodes,
             device_name=args.gate_device,
+            split_indices_path=args.split_indices,
         )
 
     if args.gate_confusion:
@@ -1392,6 +1414,7 @@ def main() -> None:
             top_k=args.gate_top_k_examples,
             raw_time_min=args.raw_time_min,
             raw_time_max=args.raw_time_max,
+            split_indices_path=args.split_indices,
         )
 
 
