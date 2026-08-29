@@ -271,6 +271,8 @@ def flatten_detection_metrics(prefix: str, metrics: dict) -> dict:
         f"TempTPAbove{prefix}": metrics["true_positive"],
         f"TempFPAbove{prefix}": metrics["false_positive"],
         f"TempFNAbove{prefix}": metrics["false_negative"],
+        f"FalseHotAbove{prefix}": metrics["false_positive"],
+        f"MissedHotAbove{prefix}": metrics["false_negative"],
     }
 
 
@@ -1620,6 +1622,15 @@ def main():
     report = {
         "config": args.config,
         "checkpoint": args.checkpoint,
+        "split_protocol": {
+            "source": split_source,
+            "path": args.split_indices,
+            "test": {
+                "count": len(test_idx),
+                "first": test_idx[0] if test_idx else None,
+                "last": test_idx[-1] if test_idx else None,
+            },
+        },
         "solidus": solidus,
         "liquidus": liquidus,
         "global_metrics": all_b,

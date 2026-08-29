@@ -65,12 +65,16 @@ DEFAULT_TEST_KEYS = [
     "test/TempTPAboveSolidus",
     "test/TempFPAboveSolidus",
     "test/TempFNAboveSolidus",
+    "test/FalseHotAboveSolidus",
+    "test/MissedHotAboveSolidus",
     "test/TempRecallAboveLiquidus",
     "test/TempPrecisionAboveLiquidus",
     "test/TempF1AboveLiquidus",
     "test/TempTPAboveLiquidus",
     "test/TempFPAboveLiquidus",
     "test/TempFNAboveLiquidus",
+    "test/FalseHotAboveLiquidus",
+    "test/MissedHotAboveLiquidus",
     "test/LaserRegionMAE",
     "test/LaserRegionCount",
     "test/LaserRegionMaxError",
@@ -145,6 +149,8 @@ def read_test_report(run_dir: Path, test_keys: list[str]) -> dict[str, float | i
         metrics = report.get("test_metrics", {})
         nested_metrics = metrics.get("metrics", {}) if isinstance(metrics, dict) else {}
         worst = metrics.get("worst_case", {}) if isinstance(metrics, dict) else {}
+    split_protocol = report.get("split_protocol", {}) if isinstance(report, dict) else {}
+    split_test = split_protocol.get("test", {}) if isinstance(split_protocol, dict) else {}
     worst_diag = worst.get("diagnostic", {}) if isinstance(worst, dict) else {}
 
     values = {
@@ -162,12 +168,24 @@ def read_test_report(run_dir: Path, test_keys: list[str]) -> dict[str, float | i
         "test/TempTPAboveSolidus": nested_metrics.get("TempTPAboveSolidus"),
         "test/TempFPAboveSolidus": nested_metrics.get("TempFPAboveSolidus"),
         "test/TempFNAboveSolidus": nested_metrics.get("TempFNAboveSolidus"),
+        "test/FalseHotAboveSolidus": nested_metrics.get(
+            "FalseHotAboveSolidus", nested_metrics.get("TempFPAboveSolidus")
+        ),
+        "test/MissedHotAboveSolidus": nested_metrics.get(
+            "MissedHotAboveSolidus", nested_metrics.get("TempFNAboveSolidus")
+        ),
         "test/TempRecallAboveLiquidus": nested_metrics.get("TempRecallAboveLiquidus"),
         "test/TempPrecisionAboveLiquidus": nested_metrics.get("TempPrecisionAboveLiquidus"),
         "test/TempF1AboveLiquidus": nested_metrics.get("TempF1AboveLiquidus"),
         "test/TempTPAboveLiquidus": nested_metrics.get("TempTPAboveLiquidus"),
         "test/TempFPAboveLiquidus": nested_metrics.get("TempFPAboveLiquidus"),
         "test/TempFNAboveLiquidus": nested_metrics.get("TempFNAboveLiquidus"),
+        "test/FalseHotAboveLiquidus": nested_metrics.get(
+            "FalseHotAboveLiquidus", nested_metrics.get("TempFPAboveLiquidus")
+        ),
+        "test/MissedHotAboveLiquidus": nested_metrics.get(
+            "MissedHotAboveLiquidus", nested_metrics.get("TempFNAboveLiquidus")
+        ),
         "test/LaserRegionMAE": nested_metrics.get("LaserRegionMAE"),
         "test/LaserRegionCount": nested_metrics.get("LaserRegionCount"),
         "test/LaserRegionMaxError": nested_metrics.get("LaserRegionMaxError"),
@@ -203,6 +221,11 @@ def read_test_report(run_dir: Path, test_keys: list[str]) -> dict[str, float | i
             row[key.replace("test/", "test_")] = value
     row["test_report"] = report_path.name
     row["test_report_type"] = report_type
+    row["split_source"] = split_protocol.get("source", "") if isinstance(split_protocol, dict) else ""
+    row["split_path"] = split_protocol.get("path", "") if isinstance(split_protocol, dict) else ""
+    row["split_test_count"] = split_test.get("count", "") if isinstance(split_test, dict) else ""
+    row["split_test_first"] = split_test.get("first", "") if isinstance(split_test, dict) else ""
+    row["split_test_last"] = split_test.get("last", "") if isinstance(split_test, dict) else ""
     return row
 
 
@@ -255,6 +278,11 @@ def main() -> None:
     columns.append("event_file")
     columns.append("test_report")
     columns.append("test_report_type")
+    columns.append("split_source")
+    columns.append("split_test_count")
+    columns.append("split_test_first")
+    columns.append("split_test_last")
+    columns.append("split_path")
 
     args.output_csv.parent.mkdir(parents=True, exist_ok=True)
     with args.output_csv.open("w", newline="", encoding="utf-8") as f:

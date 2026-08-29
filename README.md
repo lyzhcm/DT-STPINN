@@ -83,7 +83,7 @@ python scripts\evaluate_checkpoint.py `
 Required acceptance metrics for every long run:
 
 - Global `RMSE`, `MAE`, `AbsErrorP95`, `AbsErrorP99`, `MaxError`.
-- Solidus and liquidus `Precision`, `Recall`, `F1`.
+- Solidus and liquidus `Precision`, `Recall`, `F1`, `FalseHot`, and `MissedHot`.
 - Laser-region `MAE` and `MaxError`.
 - Per-timestep peak-temperature prediction error.
 - Worst 10 point diagnostics with coordinates, predicted/target temperature, laser distance, and arrival timing.

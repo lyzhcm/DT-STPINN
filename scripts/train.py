@@ -690,6 +690,25 @@ def main():
         "experiment_name": config.logging.experiment_name,
         "config": str(Path(args.config)),
         "vtu_dir": str(Path(vtu_dir)),
+        "split_protocol": {
+            "source": split_source,
+            "path": args.split_indices,
+            "train": {
+                "count": len(train_idx),
+                "first": train_idx[0] if train_idx else None,
+                "last": train_idx[-1] if train_idx else None,
+            },
+            "val": {
+                "count": len(val_idx),
+                "first": val_idx[0] if val_idx else None,
+                "last": val_idx[-1] if val_idx else None,
+            },
+            "test": {
+                "count": len(test_idx),
+                "first": test_idx[0] if test_idx else None,
+                "last": test_idx[-1] if test_idx else None,
+            },
+        },
         "checkpoint_best_val": str(trainer.log_dir / "best_model.pt"),
         "checkpoint_best_hot": str(trainer.log_dir / "best_hot_model.pt"),
         "epochs_requested": config.training.epochs,

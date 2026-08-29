@@ -763,22 +763,29 @@ class Trainer:
                 "TempTPAboveSolidus": temp_det["true_positive"],
                 "TempFPAboveSolidus": temp_det["false_positive"],
                 "TempFNAboveSolidus": temp_det["false_negative"],
+                "FalseHotAboveSolidus": temp_det["false_positive"],
+                "MissedHotAboveSolidus": temp_det["false_negative"],
                 "TempRecallAboveLiquidus": liquidus_det["recall"],
                 "TempPrecisionAboveLiquidus": liquidus_det["precision"],
                 "TempF1AboveLiquidus": liquidus_det["f1"],
                 "TempTPAboveLiquidus": liquidus_det["true_positive"],
                 "TempFPAboveLiquidus": liquidus_det["false_positive"],
                 "TempFNAboveLiquidus": liquidus_det["false_negative"],
+                "FalseHotAboveLiquidus": liquidus_det["false_positive"],
+                "MissedHotAboveLiquidus": liquidus_det["false_negative"],
             })
             if all_laser_region_preds:
+                laser_region_preds = torch.cat(all_laser_region_preds)
+                laser_region_targets = torch.cat(all_laser_region_targets)
                 laser_region_metrics = compute_metrics(
-                    torch.cat(all_laser_region_preds),
-                    torch.cat(all_laser_region_targets),
+                    laser_region_preds,
+                    laser_region_targets,
                 )
                 metrics.update({
                     f"LaserRegion{key}": value
                     for key, value in laser_region_metrics.items()
                 })
+                metrics["LaserRegionCount"] = float(laser_region_targets.numel())
             if all_hot_probs:
                 hot_probs = torch.cat(all_hot_probs)
                 hot_targs = torch.cat(all_hot_targets)
