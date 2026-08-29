@@ -1006,3 +1006,80 @@ Next z243 hypothesis:
 - If z243 still false-hots, inspect the worst-node gates and add a cap or
   stricter cold-to-hot/wake condition rather than increasing hotspot loss.
 
+## Current Execution Policy
+
+The z24x line is now treated as a bounded cleanup, not an open-ended threshold
+search.
+
+- Finish z245 evaluation if its training checkpoint already exists.
+- Do not add z246+ gate-threshold variants unless a later trajectory-alignment
+  check proves that the path features are wrong and must be recalibrated.
+- Summarize z241-z245 with one protocol: global RMSE, P99, MaxError, solidus
+  Recall/F1, and false-hot count or worst false-hot evidence.
+- Use the fixed 50-epoch baseline as the only global-regression control.
+
+## Baseline Freeze
+
+Freeze the accepted baseline with a local artifact bundle before starting the
+next model family:
+
+```powershell
+python scripts\freeze_baseline.py `
+  --name paper1_fast_50epoch `
+  --config configs\paper1_fast.yaml `
+  --checkpoint logs\paper1_temperature_fast\best_model.pt `
+  --test_report logs\paper1_temperature_fast\test_metrics.json `
+  --vtu_dir F:\VTU `
+  --seed 42
+```
+
+The script copies the config, checkpoint, and test report into
+`artifacts/baselines/<name>_<timestamp>/`, writes `split_indices.json`, and
+records the git commit plus SHA256 hashes in `baseline_manifest.json`.
+`artifacts/` and checkpoints stay local and are intentionally ignored by Git.
+
+## Trajectory Alignment Checks
+
+Export the additive path from the XML/config before trusting any laser-derived
+feature:
+
+```powershell
+python scripts\export_laser_trajectory.py `
+  --config configs\paper1_fast.yaml `
+  --xml F:\datas\5-block-fem\para.xml `
+  --vtu_dir F:\VTU `
+  --output_dir results\laser_trajectory_paper1_fast `
+  --diagnose_raw_time 42560 `
+  --diagnose_coord "10.216,-9.375,1.000"
+```
+
+Expected outputs:
+
+- `laser_segments.csv`: one row per layer/track segment.
+- `laser_samples.csv`: laser position at each VTU raw time.
+- `laser_trajectory_manifest.json`: path parameters and worst-node diagnosis.
+
+For visual overlays, pass `--hotspot_vtu F:\VTU\Data-42560.vtu` to export high
+temperature nodes with the same laser-distance and arrival-time features.
+
+## E1/E2/E3 Feature Dataset
+
+Build chunked path-feature tables only after the alignment check passes:
+
+```powershell
+python scripts\build_laser_feature_dataset.py `
+  --config configs\paper1_fast.yaml `
+  --xml F:\datas\5-block-fem\para.xml `
+  --vtu_dir F:\VTU `
+  --split train `
+  --max_steps 8 `
+  --output_dir data\processed\laser_features_smoke
+```
+
+The script writes one compressed NPZ per target step and a manifest listing
+feature columns.  The manifest defines the minimum feature groups:
+
+- E1: laser coordinates, node-relative coordinates, and center distance.
+- E2: E1 plus along/cross distances and `time_to_arrival`.
+- E3: E2 plus layer, track, scan direction, and track-neighborhood flags.
+

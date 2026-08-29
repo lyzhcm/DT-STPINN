@@ -744,6 +744,9 @@ class Trainer:
                 "TempRecallAboveSolidus": temp_det["recall"],
                 "TempPrecisionAboveSolidus": temp_det["precision"],
                 "TempF1AboveSolidus": temp_det["f1"],
+                "TempTPAboveSolidus": temp_det["true_positive"],
+                "TempFPAboveSolidus": temp_det["false_positive"],
+                "TempFNAboveSolidus": temp_det["false_negative"],
             })
             if all_hot_probs:
                 hot_probs = torch.cat(all_hot_probs)

@@ -35,6 +35,7 @@ logs/
 wandb/
 runs/
 outputs/
+artifacts/
 
 # Keep top-level summaries, ignore bulky per-run result folders.
 results/*
