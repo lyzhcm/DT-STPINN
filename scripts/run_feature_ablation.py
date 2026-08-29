@@ -1,7 +1,8 @@
-"""Run the fixed E0-E3 laser-feature ablation protocol.
+"""Run the fixed laser-feature and minimal model-head ablation protocol.
 
-The script trains each configured experiment, evaluates the selected checkpoint
-with the canonical checkpoint evaluator, and writes a shared summary table.
+The default protocol runs E0-E3, which isolates trajectory-feature changes.
+E4/E5 are opt-in model-head ablations for the next stage: hotspot auxiliary
+classification and hotspot-gated high-temperature residual prediction.
 
 Example:
     python scripts/run_feature_ablation.py --vtu_dir F:\VTU --epochs 50 --graph_device cuda
@@ -27,6 +28,7 @@ from src.config import Config
 class Experiment:
     key: str
     config_path: Path
+    eval_checkpoint: str = "best_model.pt"
 
 
 EXPERIMENTS = {
@@ -34,6 +36,16 @@ EXPERIMENTS = {
     "E1": Experiment("E1", Path("configs/feature_e1_laser_distance.yaml")),
     "E2": Experiment("E2", Path("configs/feature_e2_scan_arrival.yaml")),
     "E3": Experiment("E3", Path("configs/feature_e3_path_phase.yaml")),
+    "E4": Experiment(
+        "E4",
+        Path("configs/feature_e4_hotspot_aux.yaml"),
+        eval_checkpoint="best_hot_model.pt",
+    ),
+    "E5": Experiment(
+        "E5",
+        Path("configs/feature_e5_hotspot_residual.yaml"),
+        eval_checkpoint="best_hot_model.pt",
+    ),
 }
 
 
@@ -96,7 +108,8 @@ def build_train_command(args: argparse.Namespace, exp: Experiment, run_name: str
 
 
 def build_eval_command(args: argparse.Namespace, exp: Experiment, run_name: str) -> list[str]:
-    checkpoint = Path("logs") / run_name / args.checkpoint_name
+    checkpoint_name = args.checkpoint_name or exp.eval_checkpoint
+    checkpoint = Path("logs") / run_name / checkpoint_name
     if not args.dry_run and not checkpoint.is_file():
         raise FileNotFoundError(
             f"Expected checkpoint for {run_name}: {checkpoint}. "
@@ -149,7 +162,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--graph_device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--cache_dir", default="data/processed")
-    parser.add_argument("--checkpoint_name", default="best_model.pt")
+    parser.add_argument(
+        "--checkpoint_name",
+        default=None,
+        help="Checkpoint filename to evaluate for every experiment. Defaults to each experiment's protocol checkpoint.",
+    )
     parser.add_argument("--max_train_samples", type=int, default=None)
     parser.add_argument("--max_val_samples", type=int, default=None)
     parser.add_argument("--max_test_samples", type=int, default=None)
@@ -185,7 +202,8 @@ def main() -> None:
     print(f"  VTU dir     : {args.vtu_dir}")
     print(f"  Epochs      : {args.epochs}")
     print(f"  Seed        : {args.seed}")
-    print(f"  Checkpoint  : {args.checkpoint_name}")
+    checkpoint_label = args.checkpoint_name or "protocol default"
+    print(f"  Checkpoint  : {checkpoint_label}")
     print(f"  Dry run     : {args.dry_run}")
 
     for exp in selected:

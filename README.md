@@ -126,6 +126,24 @@ python scripts\run_feature_ablation.py `
   --resume_from_last
 ```
 
+## Minimal Head Ablations
+
+After E0-E3 confirm whether real trajectory features improve hotspot recall, run the opt-in model-head ablations:
+
+- `E4` - E3 plus a supervised solidus hotspot classification head.
+- `E5` - E4 plus a minimal hotspot-gated high-temperature residual head, using `T_pred = T_base + P_hot * delta_hot`.
+
+```powershell
+python scripts\run_feature_ablation.py `
+  --experiments E4 E5 `
+  --vtu_dir F:\VTU `
+  --epochs 50 `
+  --graph_device cuda `
+  --resume_from_last
+```
+
+E4/E5 evaluate their protocol `best_hot_model.pt` by default. E4 selects that checkpoint with `HotClsF1AboveSolidus`; E5 selects it with `TempF1AboveSolidus`.
+
 ## Laser Trajectory Diagnostics
 
 Export and diagnose the laser path around the known worst hotspot:
@@ -169,4 +187,3 @@ python scripts\check_laser_feature_dataset.py `
 - If recall improves but RMSE degrades sharply, tune classification threshold, sampling, and residual weights.
 - If real trajectory features improve hotspot recall, stop threshold-only experiments and prioritize the hotspot auxiliary head plus conditional high-temperature residual head.
 - The optimization target is not lowest global RMSE alone. The target is acceptable global RMSE with much lower hotspot miss rate and lower worst-case error.
-

@@ -2149,9 +2149,13 @@ class DTSTPINN(nn.Module):
                     cold_to_hot_gate=cold_to_hot_gate,
                     dtype=T_pred.dtype,
                 )
+            hotspot_gate_for_residual = (
+                torch.sigmoid(hotspot_logit) if hotspot_logit is not None else None
+            )
             laser_residual_control_gate = self._mix_laser_residual_control_gate(
                 learned_gate=laser_residual_learned_gate,
                 cold_to_hot_gate=cold_to_hot_gate,
+                hotspot_gate=hotspot_gate_for_residual,
             )
             if self.laser_residual_control_gate_floor > 0.0:
                 floor = torch.full_like(
@@ -4567,10 +4571,15 @@ class DTSTPINN(nn.Module):
             *,
             learned_gate: torch.Tensor,
             cold_to_hot_gate: torch.Tensor | None,
+            hotspot_gate: torch.Tensor | None = None,
             ) -> torch.Tensor:
         cold_gate = cold_to_hot_gate
         if self.laser_residual_gate_mix == "prior_only":
             return torch.ones_like(learned_gate)
+        if self.laser_residual_gate_mix == "hotspot":
+            if hotspot_gate is None:
+                return learned_gate
+            return hotspot_gate.to(device=learned_gate.device, dtype=learned_gate.dtype)
         if cold_gate is None:
             return learned_gate
         cold_gate = cold_gate.to(device=learned_gate.device, dtype=learned_gate.dtype)
