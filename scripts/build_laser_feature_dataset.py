@@ -34,7 +34,8 @@ FEATURE_GROUPS = {
         "current_along_mm", "current_cross_mm",
         "line_along_mm", "line_cross_mm", "time_to_arrival_s", "arrival_raw_time",
         "layer_idx", "track_physical", "track_program", "direction_sign",
-        "layer_norm", "track_physical_norm", "track_program_norm", "in_track_neighborhood",
+        "layer_norm", "track_physical_norm", "track_program_norm",
+        "in_laser_ellipsoid", "in_track_neighborhood",
     ],
 }
 
@@ -116,6 +117,12 @@ def main() -> None:
         "target_steps": steps,
         "dtype": args.dtype,
         "feature_groups": FEATURE_GROUPS,
+        "ellipsoid_source": {
+            "body_radius_mm": path.body_radius_mm,
+            "body_height_mm": path.body_height_mm,
+            "body_radius_front_mm": path.body_radius_front_mm,
+            "body_radius_back_mm": path.body_radius_back_mm,
+        },
         "chunks": [],
     }
 
@@ -124,6 +131,10 @@ def main() -> None:
         raw_time = raw_times[step_idx]
         features, feature_columns = path.node_process_features(coords, raw_time, raw_origin=raw_origin)
         columns = feature_columns
+        column_index = {name: idx for idx, name in enumerate(feature_columns)}
+        ellipsoid_count = int(features[:, column_index["in_laser_ellipsoid"]].sum())
+        track_neighborhood_count = int(features[:, column_index["in_track_neighborhood"]].sum())
+        min_laser_distance_mm = float(features[:, column_index["distance_to_laser_mm"]].min())
         if args.dtype == "float64":
             features = features.astype(np.float64)
         chunk_name = f"laser_features_step_{step_idx:05d}.npz"
@@ -141,8 +152,15 @@ def main() -> None:
             "raw_time": float(raw_time),
             "path": str(chunk_path),
             "bytes": chunk_path.stat().st_size,
+            "in_laser_ellipsoid_count": ellipsoid_count,
+            "in_track_neighborhood_count": track_neighborhood_count,
+            "min_laser_distance_mm": min_laser_distance_mm,
         })
-        print(f"[{n}/{len(steps)}] wrote {chunk_path}")
+        print(
+            f"[{n}/{len(steps)}] wrote {chunk_path} "
+            f"ellipsoid={ellipsoid_count} track={track_neighborhood_count} "
+            f"min_dist={min_laser_distance_mm:.4f}mm"
+        )
 
     manifest["columns"] = columns or []
     manifest_path = out_dir / "manifest.json"
@@ -152,4 +170,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

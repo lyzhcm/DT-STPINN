@@ -275,6 +275,18 @@ class AdditiveZScanPath:
         cross_vec = rel - along_current * active_dir.reshape(1, 3)
         current_distance = np.linalg.norm(rel, axis=1, keepdims=True)
         current_cross_distance = np.linalg.norm(cross_vec, axis=1, keepdims=True)
+        front = along_current >= 0.0
+        along_radius = np.where(front, self.body_radius_front_mm, self.body_radius_back_mm)
+        cross_norm = current_cross_distance / max(self.body_radius_mm, 1.0e-12)
+        along_norm = np.abs(along_current) / np.maximum(along_radius, 1.0e-12)
+        depth_norm = np.abs(rel[:, 2:3]) / max(self.body_height_mm, 1.0e-12)
+        ellipsoid_body_score = cross_norm**2 + along_norm**2 + depth_norm**2
+        ellipsoid_heat_proxy = np.exp(
+            -2.0 * cross_norm**2 - 2.0 * along_norm**2 - depth_norm**2
+        )
+        in_laser_ellipsoid = (
+            (ellipsoid_body_score <= 1.0) & bool(state.get("on_scan", True))
+        ).astype(np.float64)
 
         layer_float = (coords[:, 2] - self.start_point_mm[2]) / max(self.layer_thickness_mm, 1.0e-12)
         layer_idx = np.clip(np.rint(layer_float), 0, self.layer_count - 1).astype(np.int64)
@@ -324,6 +336,7 @@ class AdditiveZScanPath:
             "laser_x_mm", "laser_y_mm", "laser_z_mm",
             "dx_mm", "dy_mm", "dz_mm",
             "distance_to_laser_mm", "current_along_mm", "current_cross_mm",
+            "ellipsoid_body_score", "ellipsoid_heat_proxy", "in_laser_ellipsoid",
             "line_along_mm", "line_cross_mm", "time_to_arrival_s", "arrival_raw_time",
             "layer_idx", "track_physical", "track_program", "direction_sign",
             "layer_norm", "track_physical_norm", "track_program_norm",
@@ -336,6 +349,9 @@ class AdditiveZScanPath:
                 current_distance,
                 along_current,
                 current_cross_distance,
+                ellipsoid_body_score,
+                ellipsoid_heat_proxy,
+                in_laser_ellipsoid,
                 line_along,
                 line_cross,
                 time_to_arrival_s,
@@ -352,4 +368,3 @@ class AdditiveZScanPath:
             axis=1,
         )
         return features.astype(np.float32), columns
-
