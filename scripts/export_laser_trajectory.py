@@ -34,6 +34,16 @@ def parse_vec3(text: str) -> np.ndarray:
     return np.asarray(values, dtype=np.float64)
 
 
+def load_vtu_by_sample_index(vtu_dir: str | Path, sample_index: int):
+    loader = VTULoader(vtu_dir)
+    if sample_index < 0 or sample_index >= loader.num_steps:
+        raise IndexError(
+            f"sample index {sample_index} outside VTU range [0, {loader.num_steps - 1}]"
+        )
+    file_path = loader.files[sample_index]
+    return file_path, loader.parse_single(file_path)
+
+
 def make_path(args, config: Config) -> AdditiveZScanPath:
     data = config.data
     if args.xml:
@@ -114,27 +124,45 @@ def write_samples(path: AdditiveZScanPath, out_path: Path, raw_times: list[float
             ])
 
 
-def write_hot_nodes(path: AdditiveZScanPath, args, raw_origin: float, out_dir: Path) -> None:
-    if not args.hotspot_vtu:
+def write_hot_nodes(path: AdditiveZScanPath, args, raw_times: list[float], raw_origin: float, out_dir: Path) -> None:
+    if not args.hotspot_vtu and args.hotspot_step_index is None:
         return
-    from src.data.vtu_loader import VTULoader
 
-    loader = VTULoader(Path(args.hotspot_vtu).parent)
-    data = loader.parse_single(Path(args.hotspot_vtu))
-    raw_time = args.hotspot_raw_time if args.hotspot_raw_time is not None else data.time
+    if args.hotspot_step_index is not None:
+        if not args.vtu_dir:
+            raise ValueError("--hotspot_step_index requires --vtu_dir")
+        source_path, data = load_vtu_by_sample_index(args.vtu_dir, args.hotspot_step_index)
+        raw_time = raw_times[args.hotspot_step_index]
+    else:
+        source_path = Path(args.hotspot_vtu)
+        loader = VTULoader(source_path.parent)
+        data = loader.parse_single(source_path)
+        raw_time = args.hotspot_raw_time if args.hotspot_raw_time is not None else data.time
+
     mask = data.temperature.numpy() >= args.hotspot_threshold
-    coords = data.coords.numpy()[mask]
-    temps = data.temperature.numpy()[mask]
+    node_indices = np.flatnonzero(mask)
+    coords = data.coords.numpy()[node_indices]
+    temps = data.temperature.numpy()[node_indices]
     if coords.size == 0:
-        print(f"No nodes above {args.hotspot_threshold} in {args.hotspot_vtu}")
+        print(f"No nodes above {args.hotspot_threshold} in {source_path}")
         return
+
+    order = np.argsort(-temps)
+    if args.hotspot_top_k is not None:
+        order = order[:args.hotspot_top_k]
     features, columns = path.node_process_features(coords, raw_time, raw_origin=raw_origin)
-    out_path = out_dir / f"hot_nodes_{Path(args.hotspot_vtu).stem}.csv"
+    out_path = out_dir / f"hot_nodes_{source_path.stem}.csv"
     with out_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["node_rank", "temperature", "x_mm", "y_mm", "z_mm", *columns])
-        for i in np.argsort(-temps):
-            writer.writerow([int(i), float(temps[i]), *coords[i].tolist(), *features[i].tolist()])
+        writer.writerow(["rank", "node_index", "temperature", "x_mm", "y_mm", "z_mm", *columns])
+        for rank, i in enumerate(order, start=1):
+            writer.writerow([
+                rank,
+                int(node_indices[i]),
+                float(temps[i]),
+                *coords[i].tolist(),
+                *features[i].tolist(),
+            ])
     print(f"Hot-node overlay CSV: {out_path}")
 
 
@@ -152,9 +180,17 @@ def main() -> None:
     parser.add_argument("--raw_step", type=float, default=20.0)
     parser.add_argument("--diagnose_coord", type=parse_vec3, default=None, help="Coordinate x,y,z in mm")
     parser.add_argument("--diagnose_raw_time", type=float, default=None)
+    parser.add_argument("--diagnose_step_index", type=int, default=None,
+                        help="VTU sample index for node diagnosis; requires --vtu_dir and --diagnose_node_index")
+    parser.add_argument("--diagnose_node_index", type=int, default=None,
+                        help="Node index to diagnose at --diagnose_step_index")
     parser.add_argument("--hotspot_vtu", default=None, help="Optional single VTU for high-temperature overlay CSV")
+    parser.add_argument("--hotspot_step_index", type=int, default=None,
+                        help="VTU sample index for high-temperature overlay CSV; requires --vtu_dir")
     parser.add_argument("--hotspot_raw_time", type=float, default=None)
     parser.add_argument("--hotspot_threshold", type=float, default=1604.85)
+    parser.add_argument("--hotspot_top_k", type=int, default=None,
+                        help="Limit hot-node overlay CSV to the top-K hottest nodes above threshold")
     args = parser.parse_args()
 
     config = Config.from_yaml(args.config)
@@ -204,7 +240,34 @@ def main() -> None:
         print("Node diagnosis:")
         print(json.dumps(meta["diagnosis"], indent=2))
 
-    write_hot_nodes(path, args, raw_origin, out_dir)
+    if args.diagnose_node_index is not None or args.diagnose_step_index is not None:
+        if args.diagnose_node_index is None or args.diagnose_step_index is None:
+            raise ValueError("--diagnose_node_index and --diagnose_step_index must be used together")
+        if not args.vtu_dir:
+            raise ValueError("node-index diagnosis requires --vtu_dir")
+        source_path, data = load_vtu_by_sample_index(args.vtu_dir, args.diagnose_step_index)
+        node = int(args.diagnose_node_index)
+        if node < 0 or node >= data.coords.shape[0]:
+            raise IndexError(f"node index {node} outside node range [0, {data.coords.shape[0] - 1}]")
+        raw_time = raw_times[args.diagnose_step_index]
+        coord = data.coords[node].numpy().astype(np.float64)
+        features, columns = path.node_process_features(coord.reshape(1, 3), raw_time, raw_origin=raw_origin)
+        diag = {name: float(value) for name, value in zip(columns, features[0].tolist())}
+        meta["node_index_diagnosis"] = {
+            "sample_index": int(args.diagnose_step_index),
+            "vtu_file": str(source_path),
+            "raw_time": float(raw_time),
+            "node_index": node,
+            "coord_mm": coord.tolist(),
+            "temperature": float(data.temperature[node].item()),
+            "live": float(data.live[node].item()),
+            "boundary": float(data.boundary[node].item()),
+            **diag,
+        }
+        print("Node-index diagnosis:")
+        print(json.dumps(meta["node_index_diagnosis"], indent=2))
+
+    write_hot_nodes(path, args, raw_times, raw_origin, out_dir)
     meta_path = out_dir / "laser_trajectory_manifest.json"
     meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
     print(f"Segments CSV: {segments_path}")
@@ -214,4 +277,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
