@@ -105,10 +105,46 @@ class DynamicGraph:
     def apply_laser_path_config(self, data_config) -> None:
         """Override estimated laser positions with a prescribed process path."""
         mode = getattr(data_config, "laser_path_mode", "estimated")
+        xml_path = getattr(data_config, "laser_xml_path", None)
+        if xml_path:
+            mode = "additive_z_scan"
         if mode in (None, "", "estimated"):
             return
         if mode != "additive_z_scan":
             raise ValueError(f"Unsupported laser_path_mode: {mode}")
+
+        if xml_path:
+            from src.utils.laser_path import AdditiveZScanPath
+
+            path = AdditiveZScanPath.from_xml(
+                xml_path,
+                time_scale_to_s=getattr(data_config, "laser_path_time_scale_to_s"),
+                time_offset_s=getattr(data_config, "laser_path_time_offset_s", 0.0),
+                alternate_layer_scan_direction=getattr(
+                    data_config, "laser_alternate_layer_scan_direction", False
+                ),
+                reverse_hatch_order_parity=getattr(
+                    data_config, "laser_reverse_hatch_order_parity", -1
+                ),
+            )
+            self.apply_additive_z_scan_path(
+                start_point_mm=path.start_point_mm,
+                scan_direction=path.scan_direction,
+                scan_length_mm=path.scan_length_mm,
+                hatch_direction=path.hatch_direction,
+                hatch_count=path.hatch_count,
+                hatch_spacing_mm=path.hatch_spacing_mm,
+                layer_count=path.layer_count,
+                layer_thickness_mm=path.layer_thickness_mm,
+                velocity_mm_s=path.velocity_mm_s,
+                each_path_time_s=path.each_path_time_s,
+                each_layer_time_s=path.each_layer_time_s,
+                time_scale_to_s=path.time_scale_to_s,
+                time_offset_s=path.time_offset_s,
+                alternate_layer_scan_direction=path.alternate_layer_scan_direction,
+                reverse_hatch_order_parity=path.reverse_hatch_order_parity,
+            )
+            return
 
         self.apply_additive_z_scan_path(
             start_point_mm=getattr(data_config, "laser_start_point_mm"),

@@ -76,6 +76,7 @@ To rerun and freeze the single 50-epoch baseline control with one command, use:
 python scripts\run_baseline_protocol.py `
   --config configs\feature_e0_baseline.yaml `
   --vtu_dir F:\VTU `
+  --laser_xml F:\datas\5-block-fem\para.xml `
   --epochs 50 `
   --graph_device cuda `
   --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
@@ -83,13 +84,14 @@ python scripts\run_baseline_protocol.py `
   --dry_run
 ```
 
-Remove `--dry_run` to launch the long run. The wrapper trains with `scripts/train.py`, evaluates `best_model.pt` with `scripts/evaluate_checkpoint.py`, then freezes the checkpoint, config, evaluation report, split, seed, git commit, and commands with `scripts/freeze_baseline.py`. When `--split_indices` is provided, the freeze manifest records that exact frozen split as the source protocol.
+Remove `--dry_run` to launch the long run. The wrapper trains with `scripts/train.py`, evaluates `best_model.pt` with `scripts/evaluate_checkpoint.py`, then freezes the checkpoint, config, evaluation report, split, seed, git commit, commands, and optional XML laser path with `scripts/freeze_baseline.py`. When `--split_indices` is provided, the freeze manifest records that exact frozen split as the source protocol.
 
 ```powershell
 python scripts\evaluate_checkpoint.py `
   --config configs\feature_e0_baseline.yaml `
   --checkpoint logs\feature_e0_baseline\best_model.pt `
   --vtu_dir F:\VTU `
+  --laser_xml F:\datas\5-block-fem\para.xml `
   --output_dir logs\feature_e0_baseline `
   --graph_device cuda `
   --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json
@@ -117,6 +119,7 @@ Dry-run the protocol:
 ```powershell
 python scripts\run_feature_ablation.py `
   --vtu_dir F:\VTU `
+  --laser_xml F:\datas\5-block-fem\para.xml `
   --epochs 50 `
   --graph_device cuda `
   --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
@@ -130,6 +133,7 @@ Run only the fixed baseline first:
 python scripts\run_feature_ablation.py `
   --experiments E0 `
   --vtu_dir F:\VTU `
+  --laser_xml F:\datas\5-block-fem\para.xml `
   --epochs 50 `
   --graph_device cuda `
   --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
@@ -141,6 +145,7 @@ Run the complete E0-E3 protocol:
 ```powershell
 python scripts\run_feature_ablation.py `
   --vtu_dir F:\VTU `
+  --laser_xml F:\datas\5-block-fem\para.xml `
   --epochs 50 `
   --graph_device cuda `
   --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
@@ -158,6 +163,7 @@ After E0-E3 confirm whether real trajectory features improve hotspot recall, run
 python scripts\run_feature_ablation.py `
   --experiments E4 E5 `
   --vtu_dir F:\VTU `
+  --laser_xml F:\datas\5-block-fem\para.xml `
   --epochs 50 `
   --graph_device cuda `
   --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
@@ -173,6 +179,7 @@ Export and diagnose the laser path around the known worst hotspot:
 ```powershell
 python scripts\export_laser_trajectory.py `
   --config configs\feature_e3_path_phase.yaml `
+  --xml F:\datas\5-block-fem\para.xml `
   --vtu_dir F:\VTU `
   --output_dir results\laser_trajectory_step2128_smoke `
   --diagnose_step_index 2128 `
@@ -186,6 +193,7 @@ Plot laser position against high-temperature nodes:
 ```powershell
 python scripts\plot_laser_hotspots.py `
   --config configs\feature_e3_path_phase.yaml `
+  --xml F:\datas\5-block-fem\para.xml `
   --vtu_dir F:\VTU `
   --steps 2128 `
   --output_dir results\laser_hotspot_alignment_smoke `

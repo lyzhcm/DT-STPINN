@@ -31,6 +31,12 @@ def main():
     parser.add_argument("--config", type=str, default="configs/paper1.yaml")
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--vtu_dir", type=str, default=None)
+    parser.add_argument(
+        "--laser_xml",
+        type=str,
+        default=None,
+        help="Optional para.xml path; overrides YAML laser path geometry.",
+    )
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--autoregressive_steps", type=int, default=0)
     parser.add_argument("--device", type=str, default="auto")
@@ -43,6 +49,9 @@ def main():
     args = parser.parse_args()
 
     config = Config.from_yaml(args.config)
+    if args.laser_xml is not None:
+        config.data.laser_xml_path = args.laser_xml
+        config.data.laser_path_mode = "additive_z_scan"
     vtu_dir = args.vtu_dir or config.data.vtu_dir
 
     device = torch.device(args.device if args.device != "auto" else
@@ -61,6 +70,8 @@ def main():
     graph.apply_laser_path_config(config.data)
     if config.data.laser_path_mode != "estimated":
         print(f"Laser path mode: {config.data.laser_path_mode}")
+    if config.data.laser_xml_path:
+        print(f"Laser XML: {config.data.laser_xml_path}")
 
     _, _, test_idx, split_source = load_or_build_split_indices(
         graph.num_steps,

@@ -52,6 +52,8 @@ def build_train_command(args: argparse.Namespace, run_name: str) -> list[str]:
         cmd.extend(["--device", args.device])
     if args.cache_dir != "data/processed":
         cmd.extend(["--cache_dir", args.cache_dir])
+    if args.laser_xml:
+        cmd.extend(["--laser_xml", args.laser_xml])
     if args.split_indices:
         cmd.extend(["--split_indices", args.split_indices])
 
@@ -87,6 +89,8 @@ def build_eval_command(args: argparse.Namespace, run_name: str) -> list[str]:
         cmd.extend(["--device", args.device])
     if args.cache_dir != "data/processed":
         cmd.extend(["--cache_dir", args.cache_dir])
+    if args.laser_xml:
+        cmd.extend(["--laser_xml", args.laser_xml])
     if args.split_indices:
         cmd.extend(["--split_indices", args.split_indices])
     return cmd
@@ -129,6 +133,8 @@ def build_freeze_command(
         "--output_dir",
         args.output_dir,
     ]
+    if args.laser_xml:
+        cmd.extend(["--laser_xml", args.laser_xml])
     if args.split_indices:
         cmd.extend(["--split_indices", args.split_indices])
     return cmd
@@ -144,6 +150,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--graph_device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--cache_dir", default="data/processed")
+    parser.add_argument(
+        "--laser_xml",
+        default=None,
+        help="Optional para.xml path passed through training/evaluation/freeze.",
+    )
     parser.add_argument(
         "--log_dir",
         default=None,
@@ -194,6 +205,7 @@ def main() -> None:
     print(f"  Run name    : {run_name}")
     print(f"  Baseline    : {args.baseline_name}")
     print(f"  VTU dir     : {args.vtu_dir}")
+    print(f"  Laser XML   : {args.laser_xml or 'from config'}")
     print(f"  Epochs      : {args.epochs}")
     print(f"  Seed        : {args.seed}")
     print(f"  Split       : {args.split_indices or 'ratio from config'}")

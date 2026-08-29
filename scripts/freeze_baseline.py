@@ -89,6 +89,11 @@ def main() -> None:
             "If omitted, the split is rebuilt from config ratios."
         ),
     )
+    parser.add_argument(
+        "--laser_xml",
+        default=None,
+        help="Optional para.xml path used to override YAML laser path geometry.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--train_command", default="", help="Original training command, if known")
     parser.add_argument("--eval_command", default="", help="Original evaluation command, if known")
@@ -157,6 +162,12 @@ def main() -> None:
             Path(args.split_indices), out_dir, dst_name="source_split_indices.json"
         )
 
+    laser_xml_artifact = None
+    if args.laser_xml:
+        laser_xml_artifact = copy_optional_artifact(
+            Path(args.laser_xml), out_dir, dst_name="laser_path.xml"
+        )
+
     manifest = {
         "name": args.name,
         "created_utc": stamp,
@@ -171,6 +182,8 @@ def main() -> None:
             "evaluate": args.eval_command,
         },
         "vtu_dir": str(vtu_dir),
+        "laser_xml": args.laser_xml,
+        "laser_xml_artifact": laser_xml_artifact,
         "artifacts": copied,
         "split_indices": {
             "path": str(split_path),

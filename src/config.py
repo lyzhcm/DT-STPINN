@@ -379,6 +379,7 @@ class DataConfig:
     laser_feature_wake_lead_decay_mm: float = 0.45
     laser_feature_wake_time_decay_s: float = 0.08
     laser_path_mode: str = "estimated"
+    laser_xml_path: str | None = None
     laser_path_time_scale_to_s: float = 1.0e-3
     laser_path_time_offset_s: float = 0.0
     laser_start_point_mm: list[float] = field(default_factory=lambda: [10.3165, -10.1562, 0.1])

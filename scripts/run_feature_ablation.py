@@ -50,6 +50,8 @@ EXPERIMENTS = {
 
 
 def display_command(cmd: list[str]) -> str:
+    if sys.platform == "win32":
+        return subprocess.list2cmdline([str(part) for part in cmd])
     return shlex.join(str(part) for part in cmd)
 
 
@@ -99,6 +101,8 @@ def build_train_command(args: argparse.Namespace, exp: Experiment, run_name: str
         cmd.extend(["--device", args.device])
     if args.cache_dir != "data/processed":
         cmd.extend(["--cache_dir", args.cache_dir])
+    if args.laser_xml:
+        cmd.extend(["--laser_xml", args.laser_xml])
     if args.split_indices:
         cmd.extend(["--split_indices", args.split_indices])
     cmd.extend(optional_limit_args(args))
@@ -133,6 +137,8 @@ def build_eval_command(args: argparse.Namespace, exp: Experiment, run_name: str)
     ]
     if args.split_indices:
         cmd.extend(["--split_indices", args.split_indices])
+    if args.laser_xml:
+        cmd.extend(["--laser_xml", args.laser_xml])
     return cmd
 
 
@@ -167,6 +173,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--graph_device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--cache_dir", default="data/processed")
+    parser.add_argument(
+        "--laser_xml",
+        default=None,
+        help="Optional para.xml path passed to training/evaluation for prescribed trajectory geometry.",
+    )
     parser.add_argument(
         "--split_indices",
         default=None,
@@ -212,6 +223,7 @@ def main() -> None:
     print(f"  VTU dir     : {args.vtu_dir}")
     print(f"  Epochs      : {args.epochs}")
     print(f"  Seed        : {args.seed}")
+    print(f"  Laser XML   : {args.laser_xml or 'from config'}")
     print(f"  Split       : {args.split_indices or 'ratio from config'}")
     checkpoint_label = args.checkpoint_name or "protocol default"
     print(f"  Checkpoint  : {checkpoint_label}")

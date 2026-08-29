@@ -137,6 +137,12 @@ def main():
     parser = argparse.ArgumentParser(description="Train DT-STPINN for temperature prediction")
     parser.add_argument("--config", type=str, default="configs/paper1.yaml")
     parser.add_argument("--vtu_dir", type=str, default=None)
+    parser.add_argument(
+        "--laser_xml",
+        type=str,
+        default=None,
+        help="Optional para.xml path; overrides YAML laser path geometry.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--cache_dir", type=str, default="data/processed")
@@ -204,6 +210,9 @@ def main():
         config.training.epochs = args.epochs
     if args.experiment_name is not None:
         config.logging.experiment_name = args.experiment_name
+    if args.laser_xml is not None:
+        config.data.laser_xml_path = args.laser_xml
+        config.data.laser_path_mode = "additive_z_scan"
     vtu_dir = args.vtu_dir or config.data.vtu_dir
 
     if args.device == "auto":
@@ -213,6 +222,8 @@ def main():
 
     print(f"Device: {device}")
     print(f"VTU directory: {vtu_dir}")
+    if config.data.laser_xml_path:
+        print(f"Laser XML: {config.data.laser_xml_path}")
     print(f"Window size: {config.data.window_size}")
     print(f"Hidden dim: {config.model.hidden_dim}")
 

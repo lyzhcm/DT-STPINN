@@ -1150,6 +1150,12 @@ def main():
                         help="Path to .pt checkpoint")
     parser.add_argument("--vtu_dir", type=str, default=None,
                         help="Override VTU directory (default: from config)")
+    parser.add_argument(
+        "--laser_xml",
+        type=str,
+        default=None,
+        help="Optional para.xml path; overrides YAML laser path geometry.",
+    )
     parser.add_argument("--output_dir", type=str, default="results/evaluation")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--cache_dir", type=str, default="data/processed")
@@ -1174,6 +1180,9 @@ def main():
     # 1. Load configuration
     # ------------------------------------------------------------------
     config = Config.from_yaml(args.config)
+    if args.laser_xml is not None:
+        config.data.laser_xml_path = args.laser_xml
+        config.data.laser_path_mode = "additive_z_scan"
     vtu_dir = args.vtu_dir or config.data.vtu_dir
     solidus = config.material.solidus_temp
     liquidus = config.material.liquidus_temp
@@ -1182,6 +1191,8 @@ def main():
     print(f"Config        : {args.config}")
     print(f"Checkpoint    : {args.checkpoint}")
     print(f"VTU dir       : {vtu_dir}")
+    if config.data.laser_xml_path:
+        print(f"Laser XML     : {config.data.laser_xml_path}")
     print(f"Device        : {device}")
     print(f"Solidus       : {solidus} °C")
     print(f"Liquidus      : {liquidus} °C")

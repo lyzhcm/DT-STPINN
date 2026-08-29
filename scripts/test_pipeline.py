@@ -29,6 +29,12 @@ def parse_args():
         help="VTU directory. Defaults to F:\\VTU when it exists, otherwise config.data.vtu_dir.",
     )
     parser.add_argument(
+        "--laser_xml",
+        type=str,
+        default=None,
+        help="Optional para.xml path; overrides YAML laser path geometry.",
+    )
+    parser.add_argument(
         "--max_steps",
         type=int,
         default=4,
@@ -86,6 +92,9 @@ def resolve_device(name: str) -> torch.device:
 def main():
     args = parse_args()
     config = Config.from_yaml(args.config)
+    if args.laser_xml is not None:
+        config.data.laser_xml_path = args.laser_xml
+        config.data.laser_path_mode = "additive_z_scan"
     vtu_dir = resolve_vtu_dir(config, args.vtu_dir)
     device = resolve_device(args.device)
 
@@ -94,6 +103,8 @@ def main():
 
     print(f"Config: {args.config}")
     print(f"VTU directory: {vtu_dir}")
+    if config.data.laser_xml_path:
+        print(f"Laser XML: {config.data.laser_xml_path}")
 
     print("\n[1/4] Loading VTU...")
     loader = VTULoader(vtu_dir)
@@ -116,6 +127,7 @@ def main():
     graph = DynamicGraph(vtu_data, config.material,
                          k_neighbors=config.data.k_neighbors,
                          use_mesh_edges=config.data.use_mesh_edges)
+    graph.apply_laser_path_config(config.data)
     print(f"  Edges: {graph.edge_index.shape[1]:,} ({time.time() - t0:.1f}s)")
 
     print("\n[3/4] Building model...")
