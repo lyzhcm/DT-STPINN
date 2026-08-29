@@ -52,6 +52,9 @@ def main():
         k_neighbors=config.data.k_neighbors,
         use_mesh_edges=config.data.use_mesh_edges,
     )
+    graph.apply_laser_path_config(config.data)
+    if config.data.laser_path_mode != "estimated":
+        print(f"Laser path mode: {config.data.laser_path_mode}")
 
     _, _, test_idx = split_indices(
         graph.num_steps,
@@ -64,7 +67,58 @@ def main():
         window_size=config.data.window_size,
         predict_steps=config.data.predict_steps,
         time_indices=test_idx,
+        use_target_laser_features=config.data.use_target_laser_features,
+        laser_feature_radius_mm=config.data.laser_feature_radius_mm,
+        laser_feature_along_radius_mm=config.data.laser_feature_along_radius_mm,
+        laser_feature_depth_mm=config.data.laser_feature_depth_mm,
+        laser_feature_time_scale_to_s=config.data.laser_feature_time_scale_to_s,
+        laser_feature_include_sweep=config.data.laser_feature_include_sweep,
+        laser_feature_include_exposure=config.data.laser_feature_include_exposure,
+        laser_feature_exposure_source=config.data.laser_feature_exposure_source,
+        laser_feature_exposure_past_steps=config.data.laser_feature_exposure_past_steps,
+        laser_feature_exposure_future_steps=config.data.laser_feature_exposure_future_steps,
+        laser_feature_exposure_time_decay_s=config.data.laser_feature_exposure_time_decay_s,
+        laser_feature_exposure_use_segments=config.data.laser_feature_exposure_use_segments,
+        laser_feature_include_exposure_split=config.data.laser_feature_include_exposure_split,
+        laser_feature_include_arrival_time=config.data.laser_feature_include_arrival_time,
+        laser_feature_arrival_time_decay_s=config.data.laser_feature_arrival_time_decay_s,
+        laser_feature_include_neighbor_temp=config.data.laser_feature_include_neighbor_temp,
+        laser_feature_include_neighbor_hot_stats=config.data.laser_feature_include_neighbor_hot_stats,
+        laser_feature_neighbor_hot_threshold=config.data.laser_feature_neighbor_hot_threshold,
+        laser_feature_include_neighbor_warm_stats=config.data.laser_feature_include_neighbor_warm_stats,
+        laser_feature_neighbor_warm_threshold=config.data.laser_feature_neighbor_warm_threshold,
+        laser_feature_include_body_source=config.data.laser_feature_include_body_source,
+        laser_body_radius_mm=config.data.laser_body_radius_mm,
+        laser_body_height_mm=config.data.laser_body_height_mm,
+        laser_body_radius_front_mm=config.data.laser_body_radius_front_mm,
+        laser_body_radius_back_mm=config.data.laser_body_radius_back_mm,
+        laser_body_coeff_front=config.data.laser_body_coeff_front,
+        laser_body_coeff_back=config.data.laser_body_coeff_back,
+        laser_feature_include_path_arrival=config.data.laser_feature_include_path_arrival,
+        laser_feature_path_arrival_time_decay_s=config.data.laser_feature_path_arrival_time_decay_s,
+        laser_feature_path_arrival_gate_mode=config.data.laser_feature_path_arrival_gate_mode,
+        laser_feature_path_arrival_neighbor_tracks=config.data.laser_feature_path_arrival_neighbor_tracks,
+        laser_feature_include_path_phase=config.data.laser_feature_include_path_phase,
+        laser_feature_include_path_coordinates=config.data.laser_feature_include_path_coordinates,
+        laser_feature_include_path_timing=config.data.laser_feature_include_path_timing,
+        laser_feature_include_path_body_support=config.data.laser_feature_include_path_body_support,
+        laser_feature_include_path_endpoint=config.data.laser_feature_include_path_endpoint,
+        laser_feature_endpoint_radius_mm=config.data.laser_feature_endpoint_radius_mm,
+        laser_feature_endpoint_time_decay_s=config.data.laser_feature_endpoint_time_decay_s,
+        laser_feature_include_path_wake=config.data.laser_feature_include_path_wake,
+        laser_feature_wake_cross_radius_mm=config.data.laser_feature_wake_cross_radius_mm,
+        laser_feature_wake_tail_decay_mm=config.data.laser_feature_wake_tail_decay_mm,
+        laser_feature_wake_lead_decay_mm=config.data.laser_feature_wake_lead_decay_mm,
+        laser_feature_wake_time_decay_s=config.data.laser_feature_wake_time_decay_s,
     )
+    actual_node_feature_dim = test_dataset.input_feature_dim
+    if int(config.model.node_feature_dim) != actual_node_feature_dim:
+        print(
+            "Node feature dim: "
+            f"config={config.model.node_feature_dim}, "
+            f"actual={actual_node_feature_dim}; using actual dataset dim."
+        )
+        config.model.node_feature_dim = actual_node_feature_dim
     test_loader = DataLoader(
         test_dataset, batch_size=1, shuffle=False,
         collate_fn=collate_temporal_batch,

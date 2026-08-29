@@ -22,6 +22,8 @@ Outputs:
 from __future__ import annotations
 
 import argparse
+import gc
+import hashlib
 import json
 import os
 import sys
@@ -41,6 +43,37 @@ from src.data.preprocessing import split_indices
 from src.graph_builder.dynamic_graph import DynamicGraph
 from src.model import DTSTPINN
 from src.utils.visualization import write_temperature_vtu
+
+
+def graph_cache_path(cache_dir: str | Path, vtu_dir: str | Path,
+                     loader: VTULoader, config: Config) -> Path:
+    cache_root = Path(cache_dir)
+    h = hashlib.sha256()
+    h.update(str(Path(vtu_dir).resolve()).encode("utf-8"))
+    h.update(f"k={config.data.k_neighbors};mesh={config.data.use_mesh_edges};".encode("utf-8"))
+    h.update(f"kmat={config.material.thermal_conductivity};".encode("utf-8"))
+
+    for fp in loader.files:
+        st = fp.stat()
+        h.update(f"{fp.name}:{st.st_size}:{st.st_mtime_ns}\n".encode("utf-8"))
+
+    return cache_root / f"dynamic_graph_{h.hexdigest()[:16]}.pt"
+
+
+def load_graph_cache(path: Path, material_props):
+    try:
+        state = torch.load(path, map_location="cpu", weights_only=True)
+    except TypeError:
+        state = torch.load(path, map_location="cpu")
+    return DynamicGraph.from_cache_dict(state["graph"], material_props)
+
+
+def save_graph_cache(path: Path, graph: DynamicGraph, metadata: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({
+        "metadata": metadata,
+        "graph": graph.to_cache_dict(),
+    }, path)
 
 # ---------------------------------------------------------------------------
 # Temperature bins: [low_bound, high_bound) with the last bin inclusive
@@ -161,6 +194,37 @@ def compute_bin_metrics(
     return results
 
 
+def compute_score_detection_metrics(
+    score: np.ndarray, target: np.ndarray, target_threshold: float,
+    score_threshold: float,
+) -> dict:
+    """Compute binary detection metrics from arbitrary scores/probabilities."""
+    pred_high = score >= score_threshold
+    true_high = target >= target_threshold
+
+    tp = int(np.logical_and(pred_high, true_high).sum())
+    fp = int(np.logical_and(pred_high, ~true_high).sum())
+    fn = int(np.logical_and(~pred_high, true_high).sum())
+    union = int(np.logical_or(pred_high, true_high).sum())
+
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    iou = tp / union if union > 0 else 0.0
+
+    return {
+        "target_threshold": float(target_threshold),
+        "score_threshold": float(score_threshold),
+        "recall": float(recall),
+        "precision": float(precision),
+        "f1": float(f1),
+        "iou": float(iou),
+        "true_positive": tp,
+        "false_positive": fp,
+        "false_negative": fn,
+    }
+
+
 def find_neighbors(edge_index: torch.Tensor, center_node: int,
                    order: int = 2) -> dict[int, list[int]]:
     """Return 1st- and 2nd-order neighbour sets for a center node.
@@ -219,14 +283,273 @@ def collect_predictions(model, test_loader, device, dtype) -> list[dict]:
             with torch.amp.autocast("cuda", dtype=dtype, enabled=(device.type == "cuda")):
                 output = model(graph_seq, dt=batch.get("dt", 1.0))
         T_pred = output["T_pred"].detach().float()
+        hotspot_prob = None
+        if output.get("hotspot_logit") is not None:
+            hotspot_prob = torch.sigmoid(output["hotspot_logit"].detach().float())
+        hotspot_specialist_temp = None
+        if output.get("hotspot_specialist_temp") is not None:
+            hotspot_specialist_temp = output["hotspot_specialist_temp"].detach().float()
+        hotspot_specialist_gate = None
+        if output.get("hotspot_specialist_gate") is not None:
+            hotspot_specialist_gate = output["hotspot_specialist_gate"].detach().float()
+        process_gate = None
+        if output.get("process_gate") is not None:
+            process_gate = output["process_gate"].detach().float()
+        laser_target_heat_gate = None
+        if output.get("laser_target_heat_gate") is not None:
+            laser_target_heat_gate = output["laser_target_heat_gate"].detach().float()
+        laser_body_heat_gate = None
+        if output.get("laser_body_heat_gate") is not None:
+            laser_body_heat_gate = output["laser_body_heat_gate"].detach().float()
+        laser_path_body_heat_gate = None
+        if output.get("laser_path_body_heat_gate") is not None:
+            laser_path_body_heat_gate = output["laser_path_body_heat_gate"].detach().float()
+        laser_path_wake_gate = None
+        if output.get("laser_path_wake_gate") is not None:
+            laser_path_wake_gate = output["laser_path_wake_gate"].detach().float()
+        laser_sweep_heat_gate = None
+        if output.get("laser_sweep_heat_gate") is not None:
+            laser_sweep_heat_gate = output["laser_sweep_heat_gate"].detach().float()
+        laser_arrival_gate = None
+        if output.get("laser_arrival_gate") is not None:
+            laser_arrival_gate = output["laser_arrival_gate"].detach().float()
+        laser_path_active_gate = None
+        if output.get("laser_path_active_gate") is not None:
+            laser_path_active_gate = output["laser_path_active_gate"].detach().float()
+        laser_path_pre_arrival_gate = None
+        if output.get("laser_path_pre_arrival_gate") is not None:
+            laser_path_pre_arrival_gate = output["laser_path_pre_arrival_gate"].detach().float()
+        laser_path_post_arrival_gate = None
+        if output.get("laser_path_post_arrival_gate") is not None:
+            laser_path_post_arrival_gate = output["laser_path_post_arrival_gate"].detach().float()
+        laser_endpoint_gate = None
+        if output.get("laser_endpoint_gate") is not None:
+            laser_endpoint_gate = output["laser_endpoint_gate"].detach().float()
+        laser_path_program_track_gate = None
+        if output.get("laser_path_program_track_gate") is not None:
+            laser_path_program_track_gate = output["laser_path_program_track_gate"].detach().float()
+        laser_path_elapsed_gate = None
+        if output.get("laser_path_elapsed_gate") is not None:
+            laser_path_elapsed_gate = output["laser_path_elapsed_gate"].detach().float()
+        laser_path_time_until_gate = None
+        if output.get("laser_path_time_until_gate") is not None:
+            laser_path_time_until_gate = output["laser_path_time_until_gate"].detach().float()
+        laser_path_scanned_gate = None
+        if output.get("laser_path_scanned_gate") is not None:
+            laser_path_scanned_gate = output["laser_path_scanned_gate"].detach().float()
+        laser_path_cooling_tail_gate = None
+        if output.get("laser_path_cooling_tail_gate") is not None:
+            laser_path_cooling_tail_gate = output["laser_path_cooling_tail_gate"].detach().float()
+        neighbor_hot_gate = None
+        if output.get("neighbor_hot_gate") is not None:
+            neighbor_hot_gate = output["neighbor_hot_gate"].detach().float()
+        hotspot_laser_prior_temp = None
+        if output.get("hotspot_laser_prior_temp") is not None:
+            hotspot_laser_prior_temp = output["hotspot_laser_prior_temp"].detach().float()
+        hotspot_laser_prior_gate = None
+        if output.get("hotspot_laser_prior_gate") is not None:
+            hotspot_laser_prior_gate = output["hotspot_laser_prior_gate"].detach().float()
+        laser_residual_prior_gate = None
+        if output.get("laser_residual_prior_gate") is not None:
+            laser_residual_prior_gate = output["laser_residual_prior_gate"].detach().float()
+        laser_residual_learned_gate = None
+        if output.get("laser_residual_learned_gate") is not None:
+            laser_residual_learned_gate = output["laser_residual_learned_gate"].detach().float()
+        laser_residual_control_gate = None
+        if output.get("laser_residual_control_gate") is not None:
+            laser_residual_control_gate = output["laser_residual_control_gate"].detach().float()
+        laser_residual_cold_start_gate = None
+        if output.get("laser_residual_cold_start_gate") is not None:
+            laser_residual_cold_start_gate = output["laser_residual_cold_start_gate"].detach().float()
+        laser_residual_gate = None
+        if output.get("laser_residual_gate") is not None:
+            laser_residual_gate = output["laser_residual_gate"].detach().float()
+        laser_residual_delta = None
+        if output.get("laser_residual_delta") is not None:
+            laser_residual_delta = output["laser_residual_delta"].detach().float()
+        laser_residual_boost = None
+        if output.get("laser_residual_boost") is not None:
+            laser_residual_boost = output["laser_residual_boost"].detach().float()
+        cold_to_hot_gate = None
+        if output.get("cold_to_hot_gate") is not None:
+            cold_to_hot_gate = output["cold_to_hot_gate"].detach().float()
 
         # Flatten
         pred_flat = T_pred.reshape(-1).cpu()
         target_flat = target.detach().float().reshape(-1).cpu()
+        hot_prob_flat = hotspot_prob.reshape(-1).cpu() if hotspot_prob is not None else None
+        spec_temp_flat = (
+            hotspot_specialist_temp.reshape(-1).cpu()
+            if hotspot_specialist_temp is not None else None
+        )
+        spec_gate_flat = (
+            hotspot_specialist_gate.reshape(-1).cpu()
+            if hotspot_specialist_gate is not None else None
+        )
+        process_gate_flat = (
+            process_gate.reshape(-1).cpu()
+            if process_gate is not None else None
+        )
+        target_heat_gate_flat = (
+            laser_target_heat_gate.reshape(-1).cpu()
+            if laser_target_heat_gate is not None else None
+        )
+        body_heat_gate_flat = (
+            laser_body_heat_gate.reshape(-1).cpu()
+            if laser_body_heat_gate is not None else None
+        )
+        path_body_heat_gate_flat = (
+            laser_path_body_heat_gate.reshape(-1).cpu()
+            if laser_path_body_heat_gate is not None else None
+        )
+        path_wake_gate_flat = (
+            laser_path_wake_gate.reshape(-1).cpu()
+            if laser_path_wake_gate is not None else None
+        )
+        sweep_heat_gate_flat = (
+            laser_sweep_heat_gate.reshape(-1).cpu()
+            if laser_sweep_heat_gate is not None else None
+        )
+        arrival_gate_flat = (
+            laser_arrival_gate.reshape(-1).cpu()
+            if laser_arrival_gate is not None else None
+        )
+        path_active_gate_flat = (
+            laser_path_active_gate.reshape(-1).cpu()
+            if laser_path_active_gate is not None else None
+        )
+        path_pre_arrival_gate_flat = (
+            laser_path_pre_arrival_gate.reshape(-1).cpu()
+            if laser_path_pre_arrival_gate is not None else None
+        )
+        path_post_arrival_gate_flat = (
+            laser_path_post_arrival_gate.reshape(-1).cpu()
+            if laser_path_post_arrival_gate is not None else None
+        )
+        endpoint_gate_flat = (
+            laser_endpoint_gate.reshape(-1).cpu()
+            if laser_endpoint_gate is not None else None
+        )
+        path_program_track_gate_flat = (
+            laser_path_program_track_gate.reshape(-1).cpu()
+            if laser_path_program_track_gate is not None else None
+        )
+        path_elapsed_gate_flat = (
+            laser_path_elapsed_gate.reshape(-1).cpu()
+            if laser_path_elapsed_gate is not None else None
+        )
+        path_time_until_gate_flat = (
+            laser_path_time_until_gate.reshape(-1).cpu()
+            if laser_path_time_until_gate is not None else None
+        )
+        path_scanned_gate_flat = (
+            laser_path_scanned_gate.reshape(-1).cpu()
+            if laser_path_scanned_gate is not None else None
+        )
+        path_cooling_tail_gate_flat = (
+            laser_path_cooling_tail_gate.reshape(-1).cpu()
+            if laser_path_cooling_tail_gate is not None else None
+        )
+        neighbor_gate_flat = (
+            neighbor_hot_gate.reshape(-1).cpu()
+            if neighbor_hot_gate is not None else None
+        )
+        prior_temp_flat = (
+            hotspot_laser_prior_temp.reshape(-1).cpu()
+            if hotspot_laser_prior_temp is not None else None
+        )
+        prior_gate_flat = (
+            hotspot_laser_prior_gate.reshape(-1).cpu()
+            if hotspot_laser_prior_gate is not None else None
+        )
+        residual_prior_gate_flat = (
+            laser_residual_prior_gate.reshape(-1).cpu()
+            if laser_residual_prior_gate is not None else None
+        )
+        residual_learned_gate_flat = (
+            laser_residual_learned_gate.reshape(-1).cpu()
+            if laser_residual_learned_gate is not None else None
+        )
+        residual_control_gate_flat = (
+            laser_residual_control_gate.reshape(-1).cpu()
+            if laser_residual_control_gate is not None else None
+        )
+        residual_cold_start_gate_flat = (
+            laser_residual_cold_start_gate.reshape(-1).cpu()
+            if laser_residual_cold_start_gate is not None else None
+        )
+        residual_gate_flat = (
+            laser_residual_gate.reshape(-1).cpu()
+            if laser_residual_gate is not None else None
+        )
+        residual_delta_flat = (
+            laser_residual_delta.reshape(-1).cpu()
+            if laser_residual_delta is not None else None
+        )
+        residual_boost_flat = (
+            laser_residual_boost.reshape(-1).cpu()
+            if laser_residual_boost is not None else None
+        )
+        cold_to_hot_gate_flat = (
+            cold_to_hot_gate.reshape(-1).cpu()
+            if cold_to_hot_gate is not None else None
+        )
         coords = graph_seq[-1].coords.detach().float().cpu()
 
         # Build valid mask
         valid = torch.isfinite(pred_flat) & torch.isfinite(target_flat)
+        if hot_prob_flat is not None:
+            valid &= torch.isfinite(hot_prob_flat)
+        if spec_temp_flat is not None:
+            valid &= torch.isfinite(spec_temp_flat)
+        if spec_gate_flat is not None:
+            valid &= torch.isfinite(spec_gate_flat)
+        if process_gate_flat is not None:
+            valid &= torch.isfinite(process_gate_flat)
+        if target_heat_gate_flat is not None:
+            valid &= torch.isfinite(target_heat_gate_flat)
+        if body_heat_gate_flat is not None:
+            valid &= torch.isfinite(body_heat_gate_flat)
+        if sweep_heat_gate_flat is not None:
+            valid &= torch.isfinite(sweep_heat_gate_flat)
+        if arrival_gate_flat is not None:
+            valid &= torch.isfinite(arrival_gate_flat)
+        if path_active_gate_flat is not None:
+            valid &= torch.isfinite(path_active_gate_flat)
+        if path_pre_arrival_gate_flat is not None:
+            valid &= torch.isfinite(path_pre_arrival_gate_flat)
+        if path_post_arrival_gate_flat is not None:
+            valid &= torch.isfinite(path_post_arrival_gate_flat)
+        if endpoint_gate_flat is not None:
+            valid &= torch.isfinite(endpoint_gate_flat)
+        if path_program_track_gate_flat is not None:
+            valid &= torch.isfinite(path_program_track_gate_flat)
+        if path_elapsed_gate_flat is not None:
+            valid &= torch.isfinite(path_elapsed_gate_flat)
+        if path_time_until_gate_flat is not None:
+            valid &= torch.isfinite(path_time_until_gate_flat)
+        if neighbor_gate_flat is not None:
+            valid &= torch.isfinite(neighbor_gate_flat)
+        if prior_temp_flat is not None:
+            valid &= torch.isfinite(prior_temp_flat)
+        if prior_gate_flat is not None:
+            valid &= torch.isfinite(prior_gate_flat)
+        if residual_prior_gate_flat is not None:
+            valid &= torch.isfinite(residual_prior_gate_flat)
+        if residual_learned_gate_flat is not None:
+            valid &= torch.isfinite(residual_learned_gate_flat)
+        if residual_control_gate_flat is not None:
+            valid &= torch.isfinite(residual_control_gate_flat)
+        if residual_cold_start_gate_flat is not None:
+            valid &= torch.isfinite(residual_cold_start_gate_flat)
+        if residual_gate_flat is not None:
+            valid &= torch.isfinite(residual_gate_flat)
+        if residual_delta_flat is not None:
+            valid &= torch.isfinite(residual_delta_flat)
+        if residual_boost_flat is not None:
+            valid &= torch.isfinite(residual_boost_flat)
+        if cold_to_hot_gate_flat is not None:
+            valid &= torch.isfinite(cold_to_hot_gate_flat)
         if mask is not None:
             active = mask.detach().bool().reshape(-1).cpu()
             if active.numel() != target_flat.numel():
@@ -243,6 +566,9 @@ def collect_predictions(model, test_loader, device, dtype) -> list[dict]:
         target_time = batch.get("target_time", -1.0)
         if isinstance(target_time, torch.Tensor):
             target_time = float(target_time.item())
+        target_laser_pos = batch.get("target_laser_pos")
+        if isinstance(target_laser_pos, torch.Tensor):
+            target_laser_pos = target_laser_pos.detach().float().reshape(-1).cpu()
 
         # Collect input window temperatures (ground truth for context)
         window_temps = []
@@ -253,13 +579,44 @@ def collect_predictions(model, test_loader, device, dtype) -> list[dict]:
         records.append({
             "pred": pred_flat[valid],
             "target": target_flat[valid],
+            "hotspot_prob": hot_prob_flat[valid] if hot_prob_flat is not None else None,
+            "hotspot_specialist_temp": spec_temp_flat[valid] if spec_temp_flat is not None else None,
+            "hotspot_specialist_gate": spec_gate_flat[valid] if spec_gate_flat is not None else None,
+            "process_gate": process_gate_flat[valid] if process_gate_flat is not None else None,
+            "laser_target_heat_gate": target_heat_gate_flat[valid] if target_heat_gate_flat is not None else None,
+            "laser_body_heat_gate": body_heat_gate_flat[valid] if body_heat_gate_flat is not None else None,
+            "laser_path_body_heat_gate": path_body_heat_gate_flat[valid] if path_body_heat_gate_flat is not None else None,
+            "laser_path_wake_gate": path_wake_gate_flat[valid] if path_wake_gate_flat is not None else None,
+            "laser_sweep_heat_gate": sweep_heat_gate_flat[valid] if sweep_heat_gate_flat is not None else None,
+            "laser_arrival_gate": arrival_gate_flat[valid] if arrival_gate_flat is not None else None,
+            "laser_path_active_gate": path_active_gate_flat[valid] if path_active_gate_flat is not None else None,
+            "laser_path_pre_arrival_gate": path_pre_arrival_gate_flat[valid] if path_pre_arrival_gate_flat is not None else None,
+            "laser_path_post_arrival_gate": path_post_arrival_gate_flat[valid] if path_post_arrival_gate_flat is not None else None,
+            "laser_endpoint_gate": endpoint_gate_flat[valid] if endpoint_gate_flat is not None else None,
+            "laser_path_program_track_gate": path_program_track_gate_flat[valid] if path_program_track_gate_flat is not None else None,
+            "laser_path_elapsed_gate": path_elapsed_gate_flat[valid] if path_elapsed_gate_flat is not None else None,
+            "laser_path_time_until_gate": path_time_until_gate_flat[valid] if path_time_until_gate_flat is not None else None,
+            "laser_path_scanned_gate": path_scanned_gate_flat[valid] if path_scanned_gate_flat is not None else None,
+            "laser_path_cooling_tail_gate": path_cooling_tail_gate_flat[valid] if path_cooling_tail_gate_flat is not None else None,
+            "neighbor_hot_gate": neighbor_gate_flat[valid] if neighbor_gate_flat is not None else None,
+            "hotspot_laser_prior_temp": prior_temp_flat[valid] if prior_temp_flat is not None else None,
+            "hotspot_laser_prior_gate": prior_gate_flat[valid] if prior_gate_flat is not None else None,
+            "laser_residual_prior_gate": residual_prior_gate_flat[valid] if residual_prior_gate_flat is not None else None,
+            "laser_residual_learned_gate": residual_learned_gate_flat[valid] if residual_learned_gate_flat is not None else None,
+            "laser_residual_control_gate": residual_control_gate_flat[valid] if residual_control_gate_flat is not None else None,
+            "laser_residual_cold_start_gate": residual_cold_start_gate_flat[valid] if residual_cold_start_gate_flat is not None else None,
+            "laser_residual_gate": residual_gate_flat[valid] if residual_gate_flat is not None else None,
+            "laser_residual_delta": residual_delta_flat[valid] if residual_delta_flat is not None else None,
+            "laser_residual_boost": residual_boost_flat[valid] if residual_boost_flat is not None else None,
+            "cold_to_hot_gate": cold_to_hot_gate_flat[valid] if cold_to_hot_gate_flat is not None else None,
             "coords": coords,
             "valid_mask": valid,
             "target_step": target_step,
             "target_time": target_time,
             "window_temps": window_temps,
             "boundary": graph_seq[-1].boundary.detach().cpu() if hasattr(graph_seq[-1], "boundary") else None,
-            "laser_pos": graph_seq[-1].laser_pos.detach().cpu() if hasattr(graph_seq[-1], "laser_pos") else None,
+            "input_laser_pos": graph_seq[-1].laser_pos.detach().cpu() if hasattr(graph_seq[-1], "laser_pos") else None,
+            "target_laser_pos": target_laser_pos,
             "edge_index": graph_seq[-1].edge_index.detach().cpu(),
         })
 
@@ -289,6 +646,120 @@ def analyze_worst_case(records: list[dict], graph, config) -> dict:
                 "target_time_s": rec["target_time"] * 1e-3 if rec["target_time"] > 0 else None,
                 "coord_mm": rec["coords"][node_idx].tolist(),
             }
+            if rec.get("hotspot_prob") is not None:
+                worst["hotspot_probability"] = float(rec["hotspot_prob"][idx].item())
+            if rec.get("hotspot_specialist_temp") is not None:
+                worst["hotspot_specialist_temp"] = float(
+                    rec["hotspot_specialist_temp"][idx].item()
+                )
+            if rec.get("hotspot_specialist_gate") is not None:
+                worst["hotspot_specialist_gate"] = float(
+                    rec["hotspot_specialist_gate"][idx].item()
+                )
+            if rec.get("process_gate") is not None:
+                worst["process_gate"] = float(rec["process_gate"][idx].item())
+            if rec.get("laser_target_heat_gate") is not None:
+                worst["laser_target_heat_gate"] = float(
+                    rec["laser_target_heat_gate"][idx].item()
+                )
+            if rec.get("laser_body_heat_gate") is not None:
+                worst["laser_body_heat_gate"] = float(
+                    rec["laser_body_heat_gate"][idx].item()
+                )
+            if rec.get("laser_path_body_heat_gate") is not None:
+                worst["laser_path_body_heat_gate"] = float(
+                    rec["laser_path_body_heat_gate"][idx].item()
+                )
+            if rec.get("laser_path_wake_gate") is not None:
+                worst["laser_path_wake_gate"] = float(
+                    rec["laser_path_wake_gate"][idx].item()
+                )
+            if rec.get("laser_sweep_heat_gate") is not None:
+                worst["laser_sweep_heat_gate"] = float(
+                    rec["laser_sweep_heat_gate"][idx].item()
+                )
+            if rec.get("laser_arrival_gate") is not None:
+                worst["laser_arrival_gate"] = float(
+                    rec["laser_arrival_gate"][idx].item()
+                )
+            if rec.get("laser_path_active_gate") is not None:
+                worst["laser_path_active_gate"] = float(
+                    rec["laser_path_active_gate"][idx].item()
+                )
+            if rec.get("laser_path_pre_arrival_gate") is not None:
+                worst["laser_path_pre_arrival_gate"] = float(
+                    rec["laser_path_pre_arrival_gate"][idx].item()
+                )
+            if rec.get("laser_path_post_arrival_gate") is not None:
+                worst["laser_path_post_arrival_gate"] = float(
+                    rec["laser_path_post_arrival_gate"][idx].item()
+                )
+            if rec.get("laser_endpoint_gate") is not None:
+                worst["laser_endpoint_gate"] = float(
+                    rec["laser_endpoint_gate"][idx].item()
+                )
+            if rec.get("laser_path_program_track_gate") is not None:
+                worst["laser_path_program_track_gate"] = float(
+                    rec["laser_path_program_track_gate"][idx].item()
+                )
+            if rec.get("laser_path_elapsed_gate") is not None:
+                worst["laser_path_elapsed_gate"] = float(
+                    rec["laser_path_elapsed_gate"][idx].item()
+                )
+            if rec.get("laser_path_time_until_gate") is not None:
+                worst["laser_path_time_until_gate"] = float(
+                    rec["laser_path_time_until_gate"][idx].item()
+                )
+            if rec.get("laser_path_scanned_gate") is not None:
+                worst["laser_path_scanned_gate"] = float(
+                    rec["laser_path_scanned_gate"][idx].item()
+                )
+            if rec.get("laser_path_cooling_tail_gate") is not None:
+                worst["laser_path_cooling_tail_gate"] = float(
+                    rec["laser_path_cooling_tail_gate"][idx].item()
+                )
+            if rec.get("neighbor_hot_gate") is not None:
+                worst["neighbor_hot_gate"] = float(rec["neighbor_hot_gate"][idx].item())
+            if rec.get("hotspot_laser_prior_temp") is not None:
+                worst["hotspot_laser_prior_temp"] = float(
+                    rec["hotspot_laser_prior_temp"][idx].item()
+                )
+            if rec.get("hotspot_laser_prior_gate") is not None:
+                worst["hotspot_laser_prior_gate"] = float(
+                    rec["hotspot_laser_prior_gate"][idx].item()
+                )
+            if rec.get("laser_residual_prior_gate") is not None:
+                worst["laser_residual_prior_gate"] = float(
+                    rec["laser_residual_prior_gate"][idx].item()
+                )
+            if rec.get("laser_residual_learned_gate") is not None:
+                worst["laser_residual_learned_gate"] = float(
+                    rec["laser_residual_learned_gate"][idx].item()
+                )
+            if rec.get("laser_residual_control_gate") is not None:
+                worst["laser_residual_control_gate"] = float(
+                    rec["laser_residual_control_gate"][idx].item()
+                )
+            if rec.get("laser_residual_cold_start_gate") is not None:
+                worst["laser_residual_cold_start_gate"] = float(
+                    rec["laser_residual_cold_start_gate"][idx].item()
+                )
+            if rec.get("laser_residual_gate") is not None:
+                worst["laser_residual_gate"] = float(
+                    rec["laser_residual_gate"][idx].item()
+                )
+            if rec.get("laser_residual_delta") is not None:
+                worst["laser_residual_delta"] = float(
+                    rec["laser_residual_delta"][idx].item()
+                )
+            if rec.get("laser_residual_boost") is not None:
+                worst["laser_residual_boost"] = float(
+                    rec["laser_residual_boost"][idx].item()
+                )
+            if rec.get("cold_to_hot_gate") is not None:
+                worst["cold_to_hot_gate"] = float(
+                    rec["cold_to_hot_gate"][idx].item()
+                )
             worst_rec = rec
 
     if worst is None:
@@ -317,7 +788,7 @@ def analyze_worst_case(records: list[dict], graph, config) -> dict:
     if 0 <= target_step < graph.num_steps:
         live_vec = graph.live[target_step]
         if node_idx < live_vec.shape[0]:
-            activation[f"step_{target_step}_target"] = bool(live_vec[target_step].item() > 0.5)
+            activation[f"step_{target_step}_target"] = bool(live_vec[node_idx].item() > 0.5)
 
     # Check if node just became active
     became_active = False
@@ -326,12 +797,17 @@ def analyze_worst_case(records: list[dict], graph, config) -> dict:
         curr_live = graph.live[target_step][node_idx].item() if node_idx < graph.live.shape[1] else 0
         became_active = prev_live < 0.5 and curr_live > 0.5
 
-    # --- laser position and distance ---
-    laser_pos = worst_rec["laser_pos"]
-    laser_distance = None
-    if laser_pos is not None:
+    # --- laser positions and distances ---
+    input_laser_pos = worst_rec.get("input_laser_pos")
+    target_laser_pos = worst_rec.get("target_laser_pos")
+    input_laser_distance = None
+    target_laser_distance = None
+    if input_laser_pos is not None:
         node_coord = coords_all[node_idx]
-        laser_distance = float(torch.norm(node_coord - laser_pos).item())
+        input_laser_distance = float(torch.norm(node_coord - input_laser_pos).item())
+    if target_laser_pos is not None:
+        node_coord = coords_all[node_idx]
+        target_laser_distance = float(torch.norm(node_coord - target_laser_pos).item())
 
     # --- boundary label ---
     boundary_label = None
@@ -360,8 +836,10 @@ def analyze_worst_case(records: list[dict], graph, config) -> dict:
         "input_window_temperatures": input_temps,
         "activation_status": activation,
         "node_just_became_active": became_active,
-        "laser_position_mm": laser_pos.tolist() if laser_pos is not None else None,
-        "laser_distance_mm": laser_distance,
+        "input_laser_position_mm": input_laser_pos.tolist() if input_laser_pos is not None else None,
+        "input_laser_distance_mm": input_laser_distance,
+        "target_laser_position_mm": target_laser_pos.tolist() if target_laser_pos is not None else None,
+        "target_laser_distance_mm": target_laser_distance,
         "boundary_label": boundary_label,
         "neighbor_count_1st_order": len(neighbors.get(1, [])),
         "neighbor_count_2nd_order": len(neighbors.get(2, [])),
@@ -458,6 +936,16 @@ def main():
                         help="Override VTU directory (default: from config)")
     parser.add_argument("--output_dir", type=str, default="results/evaluation")
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--cache_dir", type=str, default="data/processed")
+    parser.add_argument("--no_cache", action="store_true")
+    parser.add_argument("--rebuild_cache", action="store_true")
+    parser.add_argument(
+        "--graph_device",
+        type=str,
+        default="auto",
+        choices=["auto", "cpu", "cuda"],
+        help="Where to keep preprocessed graph tensors. auto follows --device when CUDA is used.",
+    )
     args = parser.parse_args()
 
     # ------------------------------------------------------------------
@@ -481,18 +969,59 @@ def main():
     # ------------------------------------------------------------------
     # 2. Load data
     # ------------------------------------------------------------------
-    print("Loading VTU data ...")
+    print("Loading graph data ...")
     loader = VTULoader(vtu_dir)
-    vtu_data = loader.parse_sequence(verbose=True)
-    print(f"  {len(vtu_data)} time steps loaded.")
+    if loader.num_steps == 0:
+        raise FileNotFoundError(f"No Data-*.vtu files found in {vtu_dir}")
 
-    graph = DynamicGraph(
-        vtu_data,
-        material_props=config.material,
-        k_neighbors=config.data.k_neighbors,
-        use_mesh_edges=config.data.use_mesh_edges,
-    )
+    vtu_data = None
+    cache_path = graph_cache_path(args.cache_dir, vtu_dir, loader, config)
+    if not args.no_cache and cache_path.exists() and not args.rebuild_cache:
+        print(f"  Loading preprocessed graph cache: {cache_path}")
+        graph = load_graph_cache(cache_path, config.material)
+    else:
+        if args.no_cache:
+            print("  Graph cache disabled by --no_cache.")
+        elif args.rebuild_cache:
+            print("  Rebuilding graph cache because --rebuild_cache was set.")
+        else:
+            print(f"  No graph cache found. It will be saved to: {cache_path}")
+
+        print("  Loading VTU data ...")
+        vtu_data = loader.parse_sequence(verbose=True)
+        print(f"  {len(vtu_data)} time steps loaded.")
+
+        graph = DynamicGraph(
+            vtu_data,
+            material_props=config.material,
+            k_neighbors=config.data.k_neighbors,
+            use_mesh_edges=config.data.use_mesh_edges,
+        )
+        del vtu_data
+        gc.collect()
+
+        if not args.no_cache:
+            print(f"  Saving preprocessed graph cache: {cache_path}")
+            save_graph_cache(cache_path, graph, {
+                "vtu_dir": str(Path(vtu_dir).resolve()),
+                "num_vtu_files": loader.num_steps,
+                "k_neighbors": config.data.k_neighbors,
+                "use_mesh_edges": config.data.use_mesh_edges,
+            })
+
+    graph.apply_laser_path_config(config.data)
+    if config.data.laser_path_mode != "estimated":
+        print(f"  Laser path mode: {config.data.laser_path_mode}")
     print(f"  {graph.num_nodes} nodes, {graph.num_steps} steps.")
+
+    if args.graph_device == "auto":
+        graph_device = device if device.type == "cuda" else torch.device("cpu")
+    else:
+        graph_device = torch.device(args.graph_device)
+    if graph_device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("graph_device=cuda was requested, but CUDA is not available.")
+    print(f"  Moving graph tensors to {graph_device}.")
+    graph.to(graph_device)
 
     _, _, test_idx = split_indices(
         graph.num_steps,
@@ -506,7 +1035,58 @@ def main():
         window_size=config.data.window_size,
         predict_steps=config.data.predict_steps,
         time_indices=test_idx,
+        use_target_laser_features=config.data.use_target_laser_features,
+        laser_feature_radius_mm=config.data.laser_feature_radius_mm,
+        laser_feature_along_radius_mm=config.data.laser_feature_along_radius_mm,
+        laser_feature_depth_mm=config.data.laser_feature_depth_mm,
+        laser_feature_time_scale_to_s=config.data.laser_feature_time_scale_to_s,
+        laser_feature_include_sweep=config.data.laser_feature_include_sweep,
+        laser_feature_include_exposure=config.data.laser_feature_include_exposure,
+        laser_feature_exposure_source=config.data.laser_feature_exposure_source,
+        laser_feature_exposure_past_steps=config.data.laser_feature_exposure_past_steps,
+        laser_feature_exposure_future_steps=config.data.laser_feature_exposure_future_steps,
+        laser_feature_exposure_time_decay_s=config.data.laser_feature_exposure_time_decay_s,
+        laser_feature_exposure_use_segments=config.data.laser_feature_exposure_use_segments,
+        laser_feature_include_exposure_split=config.data.laser_feature_include_exposure_split,
+        laser_feature_include_arrival_time=config.data.laser_feature_include_arrival_time,
+        laser_feature_arrival_time_decay_s=config.data.laser_feature_arrival_time_decay_s,
+        laser_feature_include_neighbor_temp=config.data.laser_feature_include_neighbor_temp,
+        laser_feature_include_neighbor_hot_stats=config.data.laser_feature_include_neighbor_hot_stats,
+        laser_feature_neighbor_hot_threshold=config.data.laser_feature_neighbor_hot_threshold,
+        laser_feature_include_neighbor_warm_stats=config.data.laser_feature_include_neighbor_warm_stats,
+        laser_feature_neighbor_warm_threshold=config.data.laser_feature_neighbor_warm_threshold,
+        laser_feature_include_body_source=config.data.laser_feature_include_body_source,
+        laser_body_radius_mm=config.data.laser_body_radius_mm,
+        laser_body_height_mm=config.data.laser_body_height_mm,
+        laser_body_radius_front_mm=config.data.laser_body_radius_front_mm,
+        laser_body_radius_back_mm=config.data.laser_body_radius_back_mm,
+        laser_body_coeff_front=config.data.laser_body_coeff_front,
+        laser_body_coeff_back=config.data.laser_body_coeff_back,
+        laser_feature_include_path_arrival=config.data.laser_feature_include_path_arrival,
+        laser_feature_path_arrival_time_decay_s=config.data.laser_feature_path_arrival_time_decay_s,
+        laser_feature_path_arrival_gate_mode=config.data.laser_feature_path_arrival_gate_mode,
+        laser_feature_path_arrival_neighbor_tracks=config.data.laser_feature_path_arrival_neighbor_tracks,
+        laser_feature_include_path_phase=config.data.laser_feature_include_path_phase,
+        laser_feature_include_path_coordinates=config.data.laser_feature_include_path_coordinates,
+        laser_feature_include_path_timing=config.data.laser_feature_include_path_timing,
+        laser_feature_include_path_body_support=config.data.laser_feature_include_path_body_support,
+        laser_feature_include_path_endpoint=config.data.laser_feature_include_path_endpoint,
+        laser_feature_endpoint_radius_mm=config.data.laser_feature_endpoint_radius_mm,
+        laser_feature_endpoint_time_decay_s=config.data.laser_feature_endpoint_time_decay_s,
+        laser_feature_include_path_wake=config.data.laser_feature_include_path_wake,
+        laser_feature_wake_cross_radius_mm=config.data.laser_feature_wake_cross_radius_mm,
+        laser_feature_wake_tail_decay_mm=config.data.laser_feature_wake_tail_decay_mm,
+        laser_feature_wake_lead_decay_mm=config.data.laser_feature_wake_lead_decay_mm,
+        laser_feature_wake_time_decay_s=config.data.laser_feature_wake_time_decay_s,
     )
+    actual_node_feature_dim = test_dataset.input_feature_dim
+    if int(config.model.node_feature_dim) != actual_node_feature_dim:
+        print(
+            "  Node feature dim: "
+            f"config={config.model.node_feature_dim}, "
+            f"actual={actual_node_feature_dim}; using actual dataset dim."
+        )
+        config.model.node_feature_dim = actual_node_feature_dim
     test_loader = DataLoader(
         test_dataset, batch_size=1, shuffle=False,
         collate_fn=collate_temporal_batch,
@@ -535,6 +1115,8 @@ def main():
     # Concatenate all predictions
     all_preds = torch.cat([r["pred"] for r in records])
     all_targets = torch.cat([r["target"] for r in records])
+    hot_prob_records = [r["hotspot_prob"] for r in records if r.get("hotspot_prob") is not None]
+    all_hot_probs = torch.cat(hot_prob_records) if hot_prob_records else None
     print(f"\nTotal valid predictions: {all_preds.shape[0]:,}")
     print(f"Prediction range: [{all_preds.min().item():.1f}, {all_preds.max().item():.1f}] °C")
     print(f"Target range:     [{all_targets.min().item():.1f}, {all_targets.max().item():.1f}] °C")
@@ -599,6 +1181,18 @@ def main():
     print(f"  IoU above solidus       : {det.get('iou_above_solidus', 0):.4f}")
     print(f"  TP={det.get('true_positive', 0)}, FP={det.get('false_positive', 0)}, FN={det.get('false_negative', 0)}")
 
+    cls_det = None
+    if all_hot_probs is not None:
+        cls_det = compute_score_detection_metrics(
+            all_hot_probs.numpy(), all_targets.numpy(), solidus, 0.5
+        )
+        print("\n--- Hotspot Head Detection (probability threshold = 0.5) ---")
+        print(f"  Recall above solidus    : {cls_det['recall']:.4f}")
+        print(f"  Precision above solidus : {cls_det['precision']:.4f}")
+        print(f"  F1 above solidus        : {cls_det['f1']:.4f}")
+        print(f"  IoU above solidus       : {cls_det['iou']:.4f}")
+        print(f"  TP={cls_det['true_positive']}, FP={cls_det['false_positive']}, FN={cls_det['false_negative']}")
+
     # ------------------------------------------------------------------
     # 7. Per-timestep max temperature
     # ------------------------------------------------------------------
@@ -638,8 +1232,70 @@ def main():
         print(f"  Prediction  : {worst['prediction']:.2f} °C")
         print(f"  Target      : {worst['target']:.2f} °C")
         print(f"  Abs error   : {worst['abs_error']:.2f} °C")
-        print(f"  Laser dist  : {diag.get('laser_distance_mm', 'N/A')} mm")
-        print(f"  Laser pos   : {diag.get('laser_position_mm', 'N/A')}")
+        if "hotspot_probability" in worst:
+            print(f"  Hotspot prob: {worst['hotspot_probability']:.4f}")
+        if "hotspot_specialist_temp" in worst:
+            print(f"  Specialist T: {worst['hotspot_specialist_temp']:.2f} 掳C")
+        if "hotspot_specialist_gate" in worst:
+            print(f"  Specialist gate: {worst['hotspot_specialist_gate']:.4f}")
+        if "process_gate" in worst:
+            print(f"  Process gate   : {worst['process_gate']:.4f}")
+        if "laser_target_heat_gate" in worst:
+            print(f"  Target heat gate: {worst['laser_target_heat_gate']:.4f}")
+        if "laser_body_heat_gate" in worst:
+            print(f"  Body heat gate  : {worst['laser_body_heat_gate']:.4f}")
+        if "laser_path_body_heat_gate" in worst:
+            print(f"  Path body gate  : {worst['laser_path_body_heat_gate']:.4f}")
+        if "laser_path_wake_gate" in worst:
+            print(f"  Path wake gate  : {worst['laser_path_wake_gate']:.4f}")
+        if "laser_sweep_heat_gate" in worst:
+            print(f"  Sweep heat gate : {worst['laser_sweep_heat_gate']:.4f}")
+        if "laser_arrival_gate" in worst:
+            print(f"  Arrival gate   : {worst['laser_arrival_gate']:.4f}")
+        if "laser_path_active_gate" in worst:
+            print(f"  Path active gate: {worst['laser_path_active_gate']:.4f}")
+        if "laser_path_pre_arrival_gate" in worst:
+            print(f"  Path pre gate  : {worst['laser_path_pre_arrival_gate']:.4f}")
+        if "laser_path_post_arrival_gate" in worst:
+            print(f"  Path post gate : {worst['laser_path_post_arrival_gate']:.4f}")
+        if "laser_endpoint_gate" in worst:
+            print(f"  Endpoint gate  : {worst['laser_endpoint_gate']:.4f}")
+        if "laser_path_program_track_gate" in worst:
+            print(f"  Program-track gate: {worst['laser_path_program_track_gate']:.4f}")
+        if "laser_path_elapsed_gate" in worst:
+            print(f"  Path elapsed gate : {worst['laser_path_elapsed_gate']:.4f}")
+        if "laser_path_time_until_gate" in worst:
+            print(f"  Path time-until gate: {worst['laser_path_time_until_gate']:.4f}")
+        if "laser_path_scanned_gate" in worst:
+            print(f"  Path scanned gate : {worst['laser_path_scanned_gate']:.4f}")
+        if "laser_path_cooling_tail_gate" in worst:
+            print(f"  Path cooling tail : {worst['laser_path_cooling_tail_gate']:.4f}")
+        if "neighbor_hot_gate" in worst:
+            print(f"  Neighbor gate  : {worst['neighbor_hot_gate']:.4f}")
+        if "hotspot_laser_prior_temp" in worst:
+            print(f"  Laser prior T  : {worst['hotspot_laser_prior_temp']:.2f} C")
+        if "hotspot_laser_prior_gate" in worst:
+            print(f"  Laser prior gate: {worst['hotspot_laser_prior_gate']:.4f}")
+        if "laser_residual_prior_gate" in worst:
+            print(f"  Residual prior gate : {worst['laser_residual_prior_gate']:.4f}")
+        if "laser_residual_learned_gate" in worst:
+            print(f"  Residual learned gate: {worst['laser_residual_learned_gate']:.4f}")
+        if "laser_residual_control_gate" in worst:
+            print(f"  Residual control gate: {worst['laser_residual_control_gate']:.4f}")
+        if "laser_residual_cold_start_gate" in worst:
+            print(f"  Residual cold gate   : {worst['laser_residual_cold_start_gate']:.4f}")
+        if "laser_residual_gate" in worst:
+            print(f"  Residual gate       : {worst['laser_residual_gate']:.4f}")
+        if "laser_residual_delta" in worst:
+            print(f"  Residual delta      : {worst['laser_residual_delta']:.2f} C")
+        if "laser_residual_boost" in worst:
+            print(f"  Residual boost      : {worst['laser_residual_boost']:.2f} C")
+        if "cold_to_hot_gate" in worst:
+            print(f"  Cold-to-hot gate    : {worst['cold_to_hot_gate']:.4f}")
+        print(f"  Input laser dist : {diag.get('input_laser_distance_mm', 'N/A')} mm")
+        print(f"  Input laser pos  : {diag.get('input_laser_position_mm', 'N/A')}")
+        print(f"  Target laser dist: {diag.get('target_laser_distance_mm', 'N/A')} mm")
+        print(f"  Target laser pos : {diag.get('target_laser_position_mm', 'N/A')}")
         print(f"  Boundary    : {diag.get('boundary_label', 'N/A')}")
         print(f"  Became active: {diag.get('node_just_became_active', 'N/A')}")
         print(f"  1st-order neighbours: {diag.get('neighbor_count_1st_order', 0)}")
@@ -666,7 +1322,7 @@ def main():
         # ------------------------------------------------------------------
         print(f"\n--- Exporting VTU for worst step {worst['target_step']} ---")
         # Try to recover cells from the original VTU data
-        if vtu_data and len(vtu_data) > 0:
+        if vtu_data is not None and len(vtu_data) > 0:
             last_vtu = vtu_data[-1]
             if hasattr(last_vtu, 'cells') and last_vtu.cells:
                 # Temporarily attach cells for the VTU writer
@@ -688,6 +1344,7 @@ def main():
             for label, _, _ in BIN_DEFS
         },
         "detection_metrics": det,
+        "hotspot_head_detection_metrics": cls_det,
         "per_timestep_max_summary": {
             "num_steps": len(ts_rows),
             "true_max_range": [float(min(true_maxes)), float(max(true_maxes))],

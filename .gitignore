@@ -2,13 +2,45 @@
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Model checkpoints
+# Local environments
+.env
+.venv/
+venv/
+
+# Model checkpoints and cached tensors
 *.pt
+*.pth
+*.ckpt
+checkpoints/
+
+# Raw / preprocessed simulation data
+data/raw/
+data/processed/
+*.vtu
+*.vtk
+*.pvtu
+*.npy
+*.npz
 
 # IDE
 .vscode/
 .idea/
 
-# Logs
+# Logs and generated experiment artifacts
 logs/
+wandb/
+runs/
+outputs/
+
+# Keep top-level summaries, ignore bulky per-run result folders.
+results/*
+!results/*.md
+!results/*.csv
+
+# Local ablation scratch configs. Force-add selected configs when they become
+# part of a documented experiment set.
+configs/ablation_*.yaml

@@ -7,6 +7,7 @@ Manages the evolving graph structure during additive manufacturing:
 """
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 import torch
@@ -56,6 +57,11 @@ class DynamicGraph:
 
         self._laser_positions = self._compute_laser_positions()
         self._scan_directions = self._compute_scan_directions()
+        self._laser_path_segment_starts = None
+        self._laser_path_segment_ends = None
+        self._laser_path_segment_start_times = None
+        self._laser_path_segment_end_times = None
+        self._laser_path_params = None
 
     def _build_knn_edges(self, k: int) -> torch.Tensor:
         from torch_cluster import knn_graph
@@ -95,6 +101,179 @@ class DynamicGraph:
             else:
                 directions.append(float(torch.atan2(delta[1], delta[0])))
         return torch.tensor(directions, dtype=torch.float32)
+
+    def apply_laser_path_config(self, data_config) -> None:
+        """Override estimated laser positions with a prescribed process path."""
+        mode = getattr(data_config, "laser_path_mode", "estimated")
+        if mode in (None, "", "estimated"):
+            return
+        if mode != "additive_z_scan":
+            raise ValueError(f"Unsupported laser_path_mode: {mode}")
+
+        self.apply_additive_z_scan_path(
+            start_point_mm=getattr(data_config, "laser_start_point_mm"),
+            scan_direction=getattr(data_config, "laser_scan_direction"),
+            scan_length_mm=getattr(data_config, "laser_scan_length_mm"),
+            hatch_direction=getattr(data_config, "laser_hatch_direction"),
+            hatch_count=getattr(data_config, "laser_hatch_count"),
+            hatch_spacing_mm=getattr(data_config, "laser_hatch_spacing_mm"),
+            layer_count=getattr(data_config, "laser_layer_count"),
+            layer_thickness_mm=getattr(data_config, "laser_layer_thickness_mm"),
+            velocity_mm_s=getattr(data_config, "laser_velocity_mm_s"),
+            each_path_time_s=getattr(data_config, "laser_each_path_time_s"),
+            each_layer_time_s=getattr(data_config, "laser_each_layer_time_s"),
+            time_scale_to_s=getattr(data_config, "laser_path_time_scale_to_s"),
+            time_offset_s=getattr(data_config, "laser_path_time_offset_s", 0.0),
+            alternate_layer_scan_direction=getattr(
+                data_config, "laser_alternate_layer_scan_direction", False
+            ),
+            reverse_hatch_order_parity=getattr(
+                data_config, "laser_reverse_hatch_order_parity", -1
+            ),
+        )
+
+    def apply_additive_z_scan_path(self, *, start_point_mm, scan_direction,
+                                   scan_length_mm: float, hatch_direction,
+                                   hatch_count: int, hatch_spacing_mm: float,
+                                   layer_count: int, layer_thickness_mm: float,
+                                    velocity_mm_s: float, each_path_time_s: float,
+                                    each_layer_time_s: float,
+                                    time_scale_to_s: float = 1.0e-3,
+                                    time_offset_s: float = 0.0,
+                                    alternate_layer_scan_direction: bool = False,
+                                    reverse_hatch_order_parity: int = -1) -> None:
+        """Generate the prescribed additive_z_scan serpentine laser path."""
+        dtype = self.coords.dtype
+        start = torch.tensor(start_point_mm, dtype=dtype)
+        scan_dir = torch.tensor(scan_direction, dtype=dtype)
+        hatch_dir = torch.tensor(hatch_direction, dtype=dtype)
+
+        scan_dir = scan_dir / scan_dir.norm().clamp_min(1.0e-12)
+        hatch_dir = hatch_dir / hatch_dir.norm().clamp_min(1.0e-12)
+        hatch_count = max(1, int(hatch_count))
+        layer_count = max(1, int(layer_count))
+
+        scan_time = float(scan_length_mm) / max(float(velocity_mm_s), 1.0e-12)
+        path_period = scan_time + max(float(each_path_time_s), 0.0)
+        layer_period = path_period * hatch_count + max(float(each_layer_time_s), 0.0)
+        total_tracks = hatch_count * layer_count
+
+        positions: list[torch.Tensor] = []
+        angles: list[float] = []
+        segment_starts: list[torch.Tensor] = []
+        segment_ends: list[torch.Tensor] = []
+        segment_start_times: list[float] = []
+        segment_end_times: list[float] = []
+        t0 = float(self.times[0].item()) * float(time_scale_to_s)
+
+        for layer_idx in range(layer_count):
+            for track_in_layer in range(hatch_count):
+                physical_track = track_in_layer
+                if int(reverse_hatch_order_parity) in (0, 1):
+                    if layer_idx % 2 == int(reverse_hatch_order_parity):
+                        physical_track = hatch_count - 1 - track_in_layer
+
+                layer_offset = torch.tensor([0.0, 0.0, layer_idx * float(layer_thickness_mm)],
+                                            dtype=dtype)
+                line_start = (
+                    start
+                    + hatch_dir * (physical_track * float(hatch_spacing_mm))
+                    + layer_offset
+                )
+
+                forward = track_in_layer % 2 == 0
+                if alternate_layer_scan_direction and layer_idx % 2 == 1:
+                    forward = not forward
+
+                if forward:
+                    seg_start = line_start
+                    seg_end = line_start + scan_dir * float(scan_length_mm)
+                else:
+                    seg_start = line_start + scan_dir * float(scan_length_mm)
+                    seg_end = line_start
+
+                track_start_s = (
+                    layer_idx * layer_period + track_in_layer * path_period
+                )
+                abs_start_raw = (t0 + float(time_offset_s) + track_start_s) / float(time_scale_to_s)
+                abs_end_raw = (t0 + float(time_offset_s) + track_start_s + scan_time) / float(time_scale_to_s)
+
+                segment_starts.append(seg_start)
+                segment_ends.append(seg_end)
+                segment_start_times.append(abs_start_raw)
+                segment_end_times.append(abs_end_raw)
+
+        for raw_time in self.times.detach().cpu().tolist():
+            elapsed = max(0.0, float(raw_time) * float(time_scale_to_s) - t0 - float(time_offset_s))
+            if layer_period <= 0.0:
+                global_track = 0
+                local_path_time = 0.0
+            else:
+                layer_idx = min(int(elapsed // layer_period), layer_count - 1)
+                layer_time = elapsed - layer_idx * layer_period
+                track_in_layer = min(int(layer_time // path_period), hatch_count - 1)
+                global_track = min(layer_idx * hatch_count + track_in_layer,
+                                   total_tracks - 1)
+                local_path_time = layer_time - track_in_layer * path_period
+
+            layer_idx = global_track // hatch_count
+            track_in_layer = global_track % hatch_count
+            progress = min(max(local_path_time / scan_time, 0.0), 1.0) if scan_time > 0 else 1.0
+            physical_track = track_in_layer
+            if int(reverse_hatch_order_parity) in (0, 1):
+                if layer_idx % 2 == int(reverse_hatch_order_parity):
+                    physical_track = hatch_count - 1 - track_in_layer
+
+            layer_offset = torch.tensor([0.0, 0.0, layer_idx * float(layer_thickness_mm)],
+                                        dtype=dtype)
+            line_start = (
+                start
+                + hatch_dir * (physical_track * float(hatch_spacing_mm))
+                + layer_offset
+            )
+
+            forward = track_in_layer % 2 == 0
+            if alternate_layer_scan_direction and layer_idx % 2 == 1:
+                forward = not forward
+
+            if forward:
+                pos = line_start + scan_dir * (float(scan_length_mm) * progress)
+                active_dir = scan_dir
+            else:
+                pos = line_start + scan_dir * (float(scan_length_mm) * (1.0 - progress))
+                active_dir = -scan_dir
+
+            positions.append(pos)
+            angles.append(float(math.atan2(float(active_dir[1]), float(active_dir[0]))))
+
+        self._laser_positions = torch.stack(positions).to(self.device)
+        self._scan_directions = torch.tensor(angles, dtype=torch.float32, device=self.device)
+        self._laser_path_segment_starts = torch.stack(segment_starts).to(self.device)
+        self._laser_path_segment_ends = torch.stack(segment_ends).to(self.device)
+        self._laser_path_segment_start_times = torch.tensor(
+            segment_start_times, dtype=torch.float32, device=self.device
+        )
+        self._laser_path_segment_end_times = torch.tensor(
+            segment_end_times, dtype=torch.float32, device=self.device
+        )
+        self._laser_path_params = {
+            "start_point": start.to(self.device),
+            "scan_direction": scan_dir.to(self.device),
+            "hatch_direction": hatch_dir.to(self.device),
+            "scan_length_mm": float(scan_length_mm),
+            "hatch_count": hatch_count,
+            "hatch_spacing_mm": float(hatch_spacing_mm),
+            "layer_count": layer_count,
+            "layer_thickness_mm": float(layer_thickness_mm),
+            "velocity_mm_s": float(velocity_mm_s),
+            "scan_time_s": scan_time,
+            "path_period_s": path_period,
+            "layer_period_s": layer_period,
+            "time_scale_to_s": float(time_scale_to_s),
+            "time_offset_s": float(time_offset_s),
+            "alternate_layer_scan_direction": bool(alternate_layer_scan_direction),
+            "reverse_hatch_order_parity": int(reverse_hatch_order_parity),
+        }
 
     def get_active_mask(self, t: int) -> torch.Tensor:
         return self.live[t]
@@ -144,6 +323,14 @@ class DynamicGraph:
         self.node_k = self.node_k.to(device)
         self._laser_positions = self._laser_positions.to(device)
         self._scan_directions = self._scan_directions.to(device)
+        if self._laser_path_segment_starts is not None:
+            self._laser_path_segment_starts = self._laser_path_segment_starts.to(device)
+            self._laser_path_segment_ends = self._laser_path_segment_ends.to(device)
+            self._laser_path_segment_start_times = self._laser_path_segment_start_times.to(device)
+            self._laser_path_segment_end_times = self._laser_path_segment_end_times.to(device)
+        if self._laser_path_params is not None:
+            for key in ("start_point", "scan_direction", "hatch_direction"):
+                self._laser_path_params[key] = self._laser_path_params[key].to(device)
         return self
 
     def to_cache_dict(self) -> dict:
@@ -163,6 +350,23 @@ class DynamicGraph:
             "node_k": self.node_k.cpu(),
             "laser_positions": self._laser_positions.cpu(),
             "scan_directions": self._scan_directions.cpu(),
+            "laser_path_segment_starts": (
+                None if self._laser_path_segment_starts is None
+                else self._laser_path_segment_starts.cpu()
+            ),
+            "laser_path_segment_ends": (
+                None if self._laser_path_segment_ends is None
+                else self._laser_path_segment_ends.cpu()
+            ),
+            "laser_path_segment_start_times": (
+                None if self._laser_path_segment_start_times is None
+                else self._laser_path_segment_start_times.cpu()
+            ),
+            "laser_path_segment_end_times": (
+                None if self._laser_path_segment_end_times is None
+                else self._laser_path_segment_end_times.cpu()
+            ),
+            "laser_path_params": self._laser_path_params,
         }
 
     @classmethod
@@ -190,6 +394,19 @@ class DynamicGraph:
         graph.node_k = state["node_k"].cpu()
         graph._laser_positions = state["laser_positions"].cpu()
         graph._scan_directions = state["scan_directions"].cpu()
+        graph._laser_path_segment_starts = state.get("laser_path_segment_starts")
+        graph._laser_path_segment_ends = state.get("laser_path_segment_ends")
+        graph._laser_path_segment_start_times = state.get("laser_path_segment_start_times")
+        graph._laser_path_segment_end_times = state.get("laser_path_segment_end_times")
+        graph._laser_path_params = state.get("laser_path_params")
+        if graph._laser_path_segment_starts is not None:
+            graph._laser_path_segment_starts = graph._laser_path_segment_starts.cpu()
+            graph._laser_path_segment_ends = graph._laser_path_segment_ends.cpu()
+            graph._laser_path_segment_start_times = graph._laser_path_segment_start_times.cpu()
+            graph._laser_path_segment_end_times = graph._laser_path_segment_end_times.cpu()
+        if graph._laser_path_params is not None:
+            for key in ("start_point", "scan_direction", "hatch_direction"):
+                graph._laser_path_params[key] = graph._laser_path_params[key].cpu()
 
         graph.node_feature_builder = NodeFeatureBuilder(material_props)
         graph.edge_feature_builder = EdgeFeatureBuilder(material_props)

@@ -53,3 +53,49 @@ def compute_metrics(pred: torch.Tensor, target: torch.Tensor) -> dict[str, float
         "AbsErrorP99": float(percentile_values[3]),
         "MAPE": mape,
     }
+
+
+def compute_binary_detection_metrics(
+    score: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    target_threshold: float,
+    score_threshold: float,
+) -> dict[str, float]:
+    """Compute thresholded high-temperature detection metrics."""
+    score = score.float().reshape(-1)
+    target = target.float().reshape(-1)
+    valid = torch.isfinite(score) & torch.isfinite(target)
+    if not valid.any():
+        return {
+            "recall": 0.0,
+            "precision": 0.0,
+            "f1": 0.0,
+            "iou": 0.0,
+            "true_positive": 0.0,
+            "false_positive": 0.0,
+            "false_negative": 0.0,
+        }
+
+    pred_high = score[valid] >= score_threshold
+    true_high = target[valid] >= target_threshold
+
+    tp = (pred_high & true_high).sum().item()
+    fp = (pred_high & ~true_high).sum().item()
+    fn = (~pred_high & true_high).sum().item()
+    union = (pred_high | true_high).sum().item()
+
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    iou = tp / union if union > 0 else 0.0
+
+    return {
+        "recall": float(recall),
+        "precision": float(precision),
+        "f1": float(f1),
+        "iou": float(iou),
+        "true_positive": float(tp),
+        "false_positive": float(fp),
+        "false_negative": float(fn),
+    }
