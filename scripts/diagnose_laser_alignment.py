@@ -33,6 +33,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--config", type=str, default="configs/ablation_d_lookahead.yaml")
     parser.add_argument("--vtu_dir", type=str, default=None)
+    parser.add_argument(
+        "--laser_xml",
+        "--xml",
+        dest="laser_xml",
+        type=str,
+        default=None,
+        help="Optional para.xml path; overrides YAML laser path geometry.",
+    )
     parser.add_argument("--cache_dir", type=str, default="data/processed")
     parser.add_argument("--no_cache", action="store_true")
     parser.add_argument("--rebuild_cache", action="store_true")
@@ -1229,6 +1237,9 @@ def main() -> None:
         raise ValueError("--offset_step_s must be positive")
 
     config = Config.from_yaml(args.config)
+    if args.laser_xml is not None:
+        config.data.laser_xml_path = args.laser_xml
+        config.data.laser_path_mode = "additive_z_scan"
     vtu_dir = args.vtu_dir or config.data.vtu_dir
     threshold = args.solidus if args.solidus is not None else args.hot_threshold
 
@@ -1253,6 +1264,8 @@ def main() -> None:
     print(f"Hot frames used: {int(hot_mask.sum())} / {graph.num_steps} (threshold={threshold:.1f} C)")
     print(f"Configured offset: {config.data.laser_path_time_offset_s:.6f} s")
     print(f"Configured time scale: {config.data.laser_path_time_scale_to_s:.12g} s/raw")
+    if config.data.laser_xml_path:
+        print(f"Laser XML: {config.data.laser_xml_path}")
     print(
         "Configured path variant: "
         f"alternate_layer_scan_direction={config.data.laser_alternate_layer_scan_direction}, "

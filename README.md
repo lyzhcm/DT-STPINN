@@ -187,6 +187,19 @@ E4/E5 evaluate their protocol `best_hot_model.pt` by default. E4 selects that ch
 
 ## Laser Trajectory Diagnostics
 
+Before feature ablations, diagnose path timing and scan-direction alignment:
+
+```powershell
+python scripts\diagnose_laser_alignment.py `
+  --config configs\feature_e3_path_phase.yaml `
+  --vtu_dir F:\VTU `
+  --laser_xml F:\datas\5-block-fem\para.xml `
+  --focus_step 2128 `
+  --focus_node 24437 `
+  --gate_coverage `
+  --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json
+```
+
 Export and diagnose the laser path around the known worst hotspot:
 
 ```powershell
