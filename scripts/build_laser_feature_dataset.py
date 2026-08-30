@@ -89,7 +89,7 @@ def make_path(args, config: Config) -> AdditiveZScanPath:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build laser trajectory feature NPZ chunks")
     parser.add_argument("--config", default="configs/paper1_fast.yaml")
-    parser.add_argument("--xml", default=None)
+    parser.add_argument("--xml", "--laser_xml", dest="xml", default=None)
     parser.add_argument("--vtu_dir", required=True)
     parser.add_argument("--output_dir", default="data/processed/laser_features")
     parser.add_argument("--split", choices=["all", "train", "val", "test"], default="all")

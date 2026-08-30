@@ -74,7 +74,20 @@ test_TempFNAboveSolidus: 20
 
 ## Next Commands
 
-### 1. Verify XML path visibility
+### 1. Run the read-only preflight
+
+```powershell
+F:\anaconda3\envs\dtstpinn\python.exe scripts\check_experiment_readiness.py `
+  --vtu_dir F:\VTU `
+  --laser_xml F:\datas\5-block-fem\para.xml `
+  --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
+  --experiments E0 E1 E2 E3
+```
+
+This check should pass before launching any 50-epoch control or feature
+ablation. It is read-only and prints the dry-run baseline and ablation commands.
+
+### 2. Verify XML path visibility
 
 ```powershell
 Test-Path F:\datas\5-block-fem\para.xml
@@ -83,12 +96,12 @@ Test-Path F:\datas\5-block-fem\para.xml
 If this prints `False`, either restore the file at that path or pass the correct
 XML path to `--laser_xml` / `--xml`.
 
-### 2. Export and check trajectory alignment at the known worst point
+### 3. Export and check trajectory alignment at the known worst point
 
 ```powershell
 F:\anaconda3\envs\dtstpinn\python.exe scripts\export_laser_trajectory.py `
   --config configs\feature_e3_path_phase.yaml `
-  --xml F:\datas\5-block-fem\para.xml `
+  --laser_xml F:\datas\5-block-fem\para.xml `
   --vtu_dir F:\VTU `
   --output_dir results\laser_trajectory_step2128_xml `
   --diagnose_step_index 2128 `
@@ -100,7 +113,7 @@ F:\anaconda3\envs\dtstpinn\python.exe scripts\export_laser_trajectory.py `
 ```powershell
 F:\anaconda3\envs\dtstpinn\python.exe scripts\plot_laser_hotspots.py `
   --config configs\feature_e3_path_phase.yaml `
-  --xml F:\datas\5-block-fem\para.xml `
+  --laser_xml F:\datas\5-block-fem\para.xml `
   --vtu_dir F:\VTU `
   --steps 2128 `
   --output_dir results\laser_hotspot_alignment_xml `
@@ -111,7 +124,7 @@ F:\anaconda3\envs\dtstpinn\python.exe scripts\plot_laser_hotspots.py `
 
 Pass criteria: at hotspot steps, the laser position should be close to the high-temperature region, with sensible layer index, track index, scan direction, and `time_to_arrival_s` around the failure node.
 
-### 3. Rerun and freeze the single fixed E0 baseline
+### 4. Rerun and freeze the single fixed E0 baseline
 
 Start with a dry run:
 
@@ -129,7 +142,7 @@ F:\anaconda3\envs\dtstpinn\python.exe scripts\run_baseline_protocol.py `
 
 Remove `--dry_run` only when ready for the long run.
 
-### 4. Run fixed E0-E3 feature ablations
+### 5. Run fixed E0-E3 feature ablations
 
 ```powershell
 F:\anaconda3\envs\dtstpinn\python.exe scripts\run_feature_ablation.py `
@@ -143,4 +156,3 @@ F:\anaconda3\envs\dtstpinn\python.exe scripts\run_feature_ablation.py `
 ```
 
 Only proceed to E4/E5 after E1/E2/E3 show whether trajectory features improve hotspot recall and worst-case errors.
-

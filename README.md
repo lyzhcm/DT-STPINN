@@ -117,6 +117,16 @@ The fixed trajectory-feature ablation family is:
 - `E2` - E1 plus along/cross scan distances and `time_to_arrival`.
 - `E3` - E2 plus layer, track, direction, ellipsoid, and track-neighborhood indicators.
 
+Before starting a long run, use the read-only preflight check:
+
+```powershell
+python scripts\check_experiment_readiness.py `
+  --vtu_dir F:\VTU `
+  --laser_xml F:\datas\5-block-fem\para.xml `
+  --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
+  --experiments E0 E1 E2 E3
+```
+
 Dry-run the protocol:
 
 ```powershell
@@ -182,7 +192,7 @@ Export and diagnose the laser path around the known worst hotspot:
 ```powershell
 python scripts\export_laser_trajectory.py `
   --config configs\feature_e3_path_phase.yaml `
-  --xml F:\datas\5-block-fem\para.xml `
+  --laser_xml F:\datas\5-block-fem\para.xml `
   --vtu_dir F:\VTU `
   --output_dir results\laser_trajectory_step2128_smoke `
   --diagnose_step_index 2128 `
@@ -196,7 +206,7 @@ Plot laser position against high-temperature nodes:
 ```powershell
 python scripts\plot_laser_hotspots.py `
   --config configs\feature_e3_path_phase.yaml `
-  --xml F:\datas\5-block-fem\para.xml `
+  --laser_xml F:\datas\5-block-fem\para.xml `
   --vtu_dir F:\VTU `
   --steps 2128 `
   --output_dir results\laser_hotspot_alignment_smoke `

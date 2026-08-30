@@ -197,7 +197,13 @@ def plot_step(path: AdditiveZScanPath, data, raw_time: float, raw_origin: float,
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plot laser position and hot VTU nodes")
     parser.add_argument("--config", default="configs/feature_e3_path_phase.yaml")
-    parser.add_argument("--xml", default=None, help="Optional para.xml path")
+    parser.add_argument(
+        "--xml",
+        "--laser_xml",
+        dest="xml",
+        default=None,
+        help="Optional para.xml path",
+    )
     parser.add_argument("--vtu_dir", required=True)
     parser.add_argument("--steps", type=parse_steps, required=True,
                         help="Comma-separated VTU sample indices, for example 2128,2131")

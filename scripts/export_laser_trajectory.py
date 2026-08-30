@@ -169,7 +169,13 @@ def write_hot_nodes(path: AdditiveZScanPath, args, raw_times: list[float], raw_o
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export additive_z_scan trajectory CSV files")
     parser.add_argument("--config", default="configs/paper1_fast.yaml")
-    parser.add_argument("--xml", default=None, help="Optional para.xml path to read additive_z_scan geometry")
+    parser.add_argument(
+        "--xml",
+        "--laser_xml",
+        dest="xml",
+        default=None,
+        help="Optional para.xml path to read additive_z_scan geometry",
+    )
     parser.add_argument("--vtu_dir", default=None, help="Use Data-*.vtu names as raw output times")
     parser.add_argument("--output_dir", default="results/laser_trajectory")
     parser.add_argument("--time_scale_to_s", type=float, default=None)
