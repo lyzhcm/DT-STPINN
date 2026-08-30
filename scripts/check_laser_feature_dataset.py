@@ -21,6 +21,9 @@ REQUIRED_COLUMNS = [
     "in_laser_ellipsoid", "in_track_neighborhood",
 ]
 
+BINARY_COLUMNS = ["in_laser_ellipsoid", "in_track_neighborhood"]
+NORMALIZED_COLUMNS = ["layer_norm", "track_physical_norm", "track_program_norm"]
+
 
 def load_manifest(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
@@ -52,6 +55,34 @@ def validate_columns(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
     return missing, group_errors
 
 
+def validate_manifest_consistency(manifest: dict[str, Any], require_xml: bool) -> list[str]:
+    errors: list[str] = []
+    chunks = list(manifest.get("chunks", []))
+    target_steps = list(manifest.get("target_steps", []))
+
+    if target_steps and len(target_steps) != len(chunks):
+        errors.append(
+            f"target_steps/chunks count mismatch: {len(target_steps)} vs {len(chunks)}"
+        )
+    if target_steps and target_steps != sorted(target_steps):
+        errors.append("target_steps must be sorted in ascending order")
+
+    chunk_steps = [int(chunk.get("step", -1)) for chunk in chunks]
+    if target_steps and chunk_steps != [int(step) for step in target_steps]:
+        errors.append("chunk step list does not match manifest target_steps")
+    if len(chunk_steps) != len(set(chunk_steps)):
+        errors.append("duplicate chunk step entries in manifest")
+
+    num_nodes = manifest.get("num_nodes")
+    if num_nodes is not None and int(num_nodes) <= 0:
+        errors.append(f"num_nodes must be positive, got {num_nodes}")
+
+    if require_xml and manifest.get("xml") is None:
+        errors.append("manifest xml is null; fixed roadmap expects XML-derived trajectory features")
+
+    return errors
+
+
 def summarize_chunk(chunk_path: Path, expected_columns: list[str], node_index: int | None) -> tuple[dict[str, Any], dict[str, float] | None, list[str]]:
     errors: list[str] = []
     with np.load(chunk_path, allow_pickle=False) as data:
@@ -80,6 +111,33 @@ def summarize_chunk(chunk_path: Path, expected_columns: list[str], node_index: i
 
     def col(name: str) -> np.ndarray:
         return features[:, column_index[name]]
+
+    if "target_step" in expected_columns:
+        errors.append("target_step should be stored as chunk metadata, not as a feature column")
+
+    rel_distance = np.linalg.norm(
+        np.stack([col("dx_mm"), col("dy_mm"), col("dz_mm")], axis=1),
+        axis=1,
+    )
+    if not np.allclose(rel_distance, col("distance_to_laser_mm"), atol=1.0e-3, rtol=1.0e-4):
+        max_diff = float(np.max(np.abs(rel_distance - col("distance_to_laser_mm"))))
+        errors.append(f"distance_to_laser_mm inconsistent with dx/dy/dz, max_diff={max_diff:.6g}")
+
+    for name in BINARY_COLUMNS:
+        values = col(name)
+        if np.any((values < -1.0e-6) | (values > 1.0 + 1.0e-6)):
+            errors.append(f"{name} must be in [0, 1]")
+        if not np.allclose(values, np.round(values), atol=1.0e-6):
+            errors.append(f"{name} must be binary 0/1")
+
+    for name in NORMALIZED_COLUMNS:
+        if name in column_index:
+            values = col(name)
+            if np.any((values < -1.0e-6) | (values > 1.0 + 1.0e-6)):
+                errors.append(f"{name} must be normalized to [0, 1]")
+
+    if np.any(~np.isin(col("direction_sign"), [-1.0, 1.0])):
+        errors.append("direction_sign must be -1 or 1")
 
     summary = {
         "target_step": target_step,
@@ -128,6 +186,11 @@ def main() -> None:
     parser.add_argument("--max_chunks", type=int, default=None)
     parser.add_argument("--step", type=int, default=None, help="Only inspect this target step")
     parser.add_argument("--node_index", type=int, default=None, help="Optional node row to include in the JSON report")
+    parser.add_argument(
+        "--require_xml",
+        action="store_true",
+        help="Fail if the manifest was not generated from an explicit XML path.",
+    )
     args = parser.parse_args()
 
     manifest_path = Path(args.manifest)
@@ -135,6 +198,7 @@ def main() -> None:
     missing_columns, group_errors = validate_columns(manifest)
     errors = [f"missing required column: {name}" for name in missing_columns]
     errors.extend(group_errors)
+    errors.extend(validate_manifest_consistency(manifest, require_xml=args.require_xml))
 
     columns = [str(c) for c in manifest.get("columns", [])]
     chunks = list(manifest.get("chunks", []))

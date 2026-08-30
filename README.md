@@ -234,7 +234,8 @@ Validate generated trajectory-feature chunks before using them for ablations:
 python scripts\check_laser_feature_dataset.py `
   --manifest data\processed\laser_features_smoke\manifest.json `
   --step 2128 `
-  --node_index 24437
+  --node_index 24437 `
+  --require_xml
 ```
 
 ## Experiment Decisions
