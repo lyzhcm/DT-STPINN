@@ -13,6 +13,9 @@ This repository keeps source code, fixed experiment configs, lightweight summari
 - `results/*.md`, `results/*.csv` - small tracked summaries only.
 - `data/`, `logs/`, `artifacts/` - generated local outputs ignored by git.
 
+Current roadmap completion evidence and next commands are tracked in
+`docs/ROADMAP_STATUS.md`.
+
 ## Data Policy
 
 Keep the full Flow-3D / FEM VTU sequence outside git. On the current workstation the VTU directory is expected at:
