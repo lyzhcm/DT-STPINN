@@ -9,11 +9,11 @@ files, logs, preprocessed tensors, and per-run artifacts remain local-only.
 ## Current Repository State
 
 - Remote branch: `master` on `origin`.
-- Latest protocol commit: `c276d18 Support XML laser path override in protocols`.
+- Latest protocol commit: `d3c5595 Strengthen laser feature dataset checks`.
 - Important local-only data paths:
   - VTU sequence: `F:\VTU`.
   - Process XML expected by protocol: `F:\datas\5-block-fem\para.xml`.
-- Current session note: `F:\VTU` is visible, but `F:\datas\5-block-fem\para.xml` was not visible when this status was written.
+- Current session note: `F:\VTU` is visible, frozen split/config checks pass, but `F:\datas\5-block-fem\para.xml` is still not visible. A recursive search under `F:\datas` found no `para.xml` in this session.
 
 ## Objective Checklist
 
