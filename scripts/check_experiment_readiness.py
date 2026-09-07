@@ -67,11 +67,44 @@ def check_vtu_dir(vtu_dir: Path, min_vtu_steps: int) -> CheckResult:
     return CheckResult("VTU sequence", True, f"found {count} Data-*.vtu files in {vtu_dir}")
 
 
-def check_xml(xml_path: Path | None) -> CheckResult:
+def find_xml_candidates(search_roots: list[str], max_candidates: int) -> list[Path]:
+    candidates: list[Path] = []
+    seen: set[str] = set()
+    for root_value in search_roots:
+        if not root_value:
+            continue
+        root = Path(root_value)
+        if not root.exists():
+            continue
+        patterns = ["para.xml", "*.xml"]
+        for pattern in patterns:
+            try:
+                matches = root.rglob(pattern) if root.is_dir() else [root]
+                for path in matches:
+                    if not path.is_file():
+                        continue
+                    key = str(path.resolve()).lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    candidates.append(path)
+                    if len(candidates) >= max_candidates:
+                        return candidates
+            except OSError:
+                continue
+    return candidates
+
+
+def check_xml(xml_path: Path | None, search_roots: list[str], max_candidates: int) -> CheckResult:
     if xml_path is None:
         return CheckResult("laser XML", False, "--laser_xml is required for the fixed roadmap protocol")
     if not xml_path.exists():
-        return CheckResult("laser XML", False, f"missing {xml_path}")
+        candidates = find_xml_candidates(search_roots, max_candidates)
+        if candidates:
+            suggestion = "; candidates: " + ", ".join(str(path) for path in candidates)
+        else:
+            suggestion = "; no XML candidates found under " + ", ".join(search_roots)
+        return CheckResult("laser XML", False, f"missing {xml_path}{suggestion}")
     return CheckResult("laser XML", True, str(xml_path))
 
 
@@ -201,6 +234,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--graph_device", choices=["auto", "cpu", "cuda"], default="cuda")
     parser.add_argument("--min_vtu_steps", type=int, default=2000)
+    parser.add_argument(
+        "--xml_search_roots",
+        nargs="*",
+        default=["F:\\datas", "F:\\DT-STPINN"],
+        help="Roots to scan for XML candidates when --laser_xml is missing.",
+    )
+    parser.add_argument("--xml_search_max", type=int, default=10)
     parser.add_argument("--no_command_preview", action="store_true")
     return parser.parse_args()
 
@@ -215,7 +255,11 @@ def main() -> None:
     total_steps = count_vtu_files(vtu_dir)
     results = [
         check_vtu_dir(vtu_dir, args.min_vtu_steps),
-        check_xml(Path(args.laser_xml) if args.laser_xml else None),
+        check_xml(
+            Path(args.laser_xml) if args.laser_xml else None,
+            args.xml_search_roots,
+            args.xml_search_max,
+        ),
         check_split(Path(args.split_indices) if args.split_indices else None, total_steps or None),
         check_baseline_artifact(Path(args.baseline_artifact) if args.baseline_artifact else None),
     ]

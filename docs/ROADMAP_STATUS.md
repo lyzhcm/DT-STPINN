@@ -1,6 +1,6 @@
 # Roadmap Status
 
-Last updated: 2026-08-30
+Last updated: 2026-09-07
 
 This file tracks the current evidence for the fixed DT-STPINN experiment roadmap.
 It is intentionally lightweight and should stay in git. Large checkpoints, VTU
@@ -9,11 +9,11 @@ files, logs, preprocessed tensors, and per-run artifacts remain local-only.
 ## Current Repository State
 
 - Remote branch: `master` on `origin`.
-- Latest protocol commit: `d3c5595 Strengthen laser feature dataset checks`.
+- Protocol support in git includes XML path overrides, fixed split handling, feature ablation configs, checkpoint evaluation metrics, and XML candidate reporting in readiness checks.
 - Important local-only data paths:
   - VTU sequence: `F:\VTU`.
   - Process XML expected by protocol: `F:\datas\5-block-fem\para.xml`.
-- Current session note: `F:\VTU` is visible, frozen split/config checks pass, but `F:\datas\5-block-fem\para.xml` is still not visible. A recursive search under `F:\datas` found no `para.xml` in this session.
+- Current session note: `F:\VTU` is visible, frozen split/config checks pass, but `F:\datas\5-block-fem\para.xml` is still not visible. The readiness preflight now scans XML search roots and reports candidate XML paths when the configured file is missing.
 
 ## Objective Checklist
 
