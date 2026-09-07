@@ -271,6 +271,8 @@ def main() -> None:
         checkpoint_source = str(checkpoint_record.get("source", "")) if isinstance(checkpoint_record, dict) else ""
         vtu_dir = str(manifest.get("vtu_dir", ""))
         seed = manifest.get("seed")
+        epochs = manifest.get("epochs")
+        experiment_name = str(manifest.get("experiment_name", ""))
         split_source = str(split_record.get("source", "")) if split_record else ""
         split_source_path = split_source.removeprefix("frozen:") if split_source.startswith("frozen:") else ""
         laser_xml = str(manifest.get("laser_xml", ""))
@@ -280,6 +282,10 @@ def main() -> None:
         require_command_option(checks, train_cmd, "train command", "--vtu_dir", vtu_dir)
         require_command_option(checks, eval_cmd, "evaluate command", "--vtu_dir", vtu_dir)
         require_command_option(checks, train_cmd, "train command", "--seed", str(seed) if seed is not None else "")
+        if epochs is not None:
+            require_command_option(checks, train_cmd, "train command", "--epochs", str(epochs))
+        if experiment_name:
+            require_command_option(checks, train_cmd, "train command", "--experiment_name", experiment_name)
         require_command_option(checks, eval_cmd, "evaluate command", "--checkpoint", checkpoint_source)
         if split_source_path:
             require_command_option(checks, train_cmd, "train command", "--split_indices", split_source_path)

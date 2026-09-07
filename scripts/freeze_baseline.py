@@ -126,6 +126,17 @@ def main() -> None:
         help="Optional para.xml path used to override YAML laser path geometry.",
     )
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=None,
+        help="Epoch count used by the frozen protocol. Defaults to config.training.epochs.",
+    )
+    parser.add_argument(
+        "--experiment_name",
+        default="",
+        help="Training run name used by the frozen protocol, if known.",
+    )
     parser.add_argument("--train_command", default="", help="Original training command, if known")
     parser.add_argument("--eval_command", default="", help="Original evaluation command, if known")
     parser.add_argument("--notes", default="")
@@ -147,6 +158,7 @@ def main() -> None:
     checkpoint_path = Path(args.checkpoint)
     report_path = Path(args.test_report)
     config = Config.from_yaml(config_path)
+    epochs = args.epochs if args.epochs is not None else config.training.epochs
     vtu_dir = Path(args.vtu_dir or config.data.vtu_dir)
 
     loader = VTULoader(vtu_dir)
@@ -219,6 +231,8 @@ def main() -> None:
         "name": args.name,
         "created_utc": stamp,
         "seed": args.seed,
+        "epochs": epochs,
+        "experiment_name": args.experiment_name,
         "git": {
             "commit": git_output(["rev-parse", "HEAD"]),
             "branch": git_output(["branch", "--show-current"]),
