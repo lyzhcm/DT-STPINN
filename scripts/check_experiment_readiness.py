@@ -1,8 +1,8 @@
 """Preflight checks before launching fixed baseline or feature ablations.
 
 The script is intentionally read-only. It checks paths, fixed split metadata,
-experiment configs, and prints the long-run commands that should be launched
-only after the checks pass.
+frozen baseline artifacts, experiment configs, and prints the long-run commands
+that should be launched only after the checks pass.
 """
 from __future__ import annotations
 
@@ -242,15 +242,43 @@ def check_config(exp: str, path: Path, expected_epochs: int) -> CheckResult:
     )
 
 
-def check_baseline_artifact(path: Path | None) -> CheckResult:
+def check_baseline_artifact(path: Path | None, verify_level: str) -> CheckResult:
     if path is None:
         return CheckResult("historical baseline artifact", True, "not requested")
     if not path.exists():
         return CheckResult("historical baseline artifact", False, f"missing {path}")
-    required = ["baseline_manifest.json", "best_model.pt", "evaluation_report.json", "split_indices.json"]
-    missing = [name for name in required if not (path / name).exists()]
-    if missing:
-        return CheckResult("historical baseline artifact", False, f"missing {', '.join(missing)} in {path}")
+
+    verifier = Path("scripts/verify_baseline_artifact.py")
+    if not verifier.exists():
+        return CheckResult("historical baseline artifact", False, f"missing verifier {verifier}")
+
+    cmd = [sys.executable, str(verifier), str(path)]
+    if verify_level in {"commands", "protocol", "strict"}:
+        cmd.append("--require_commands")
+    if verify_level in {"protocol", "strict"}:
+        cmd.append("--require_protocol_args")
+        cmd.append("--require_laser_xml")
+        cmd.append("--require_acceptance_artifacts")
+    if verify_level == "strict":
+        cmd.append("--require_clean_git")
+
+    try:
+        completed = subprocess.run([*cmd, "--quiet"], capture_output=True, text=True, check=False)
+    except Exception as exc:  # noqa: BLE001
+        return CheckResult("historical baseline artifact", False, f"verifier failed to run: {exc}")
+
+    if completed.returncode != 0:
+        verbose = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        lines = (verbose.stdout + "\n" + verbose.stderr).strip().splitlines()
+        failures = [line for line in lines if line.startswith("[FAIL]")]
+        detail = failures[:3] or lines[-3:]
+        message = "; ".join(detail) if detail else f"exit code {completed.returncode}"
+        return CheckResult(
+            "historical baseline artifact",
+            False,
+            f"{verify_level} verification failed: {message}",
+        )
+
     try:
         manifest = json.loads((path / "baseline_manifest.json").read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001
@@ -258,7 +286,7 @@ def check_baseline_artifact(path: Path | None) -> CheckResult:
     return CheckResult(
         "historical baseline artifact",
         True,
-        f"{path.name}, commit={manifest.get('git', {}).get('commit', 'unknown')}",
+        f"{path.name}, verify={verify_level}, commit={manifest.get('git', {}).get('commit', 'unknown')}",
     )
 
 
@@ -331,6 +359,16 @@ def parse_args() -> argparse.Namespace:
         "--baseline_artifact",
         default="artifacts\\baselines\\paper1_fast_50epoch_canonical_eval_20260829T185514Z",
     )
+    parser.add_argument(
+        "--baseline_artifact_verify",
+        choices=["basic", "commands", "protocol", "strict"],
+        default="commands",
+        help=(
+            "Frozen baseline verification depth: basic checks hashes/split/commit; "
+            "commands also requires train/evaluate commands; protocol also requires fixed "
+            "protocol args, laser XML, and acceptance sidecars; strict also requires clean git."
+        ),
+    )
     parser.add_argument("--experiments", nargs="+", default=["E0", "E1", "E2", "E3"])
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--graph_device", choices=["auto", "cpu", "cuda"], default="cuda")
@@ -369,7 +407,10 @@ def main() -> None:
             atol=args.xml_compare_atol,
         ),
         check_split(Path(args.split_indices) if args.split_indices else None, total_steps or None),
-        check_baseline_artifact(Path(args.baseline_artifact) if args.baseline_artifact else None),
+        check_baseline_artifact(
+            Path(args.baseline_artifact) if args.baseline_artifact else None,
+            args.baseline_artifact_verify,
+        ),
     ]
     results.extend(check_config(exp, EXPERIMENT_CONFIGS[exp], args.epochs) for exp in args.experiments)
 
