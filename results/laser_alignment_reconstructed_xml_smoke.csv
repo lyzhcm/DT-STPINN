@@ -1,0 +1,2 @@
+check,date,xml,step,node,raw_time,target_temperature,laser_x_mm,laser_y_mm,laser_z_mm,distance_to_laser_mm,line_cross_mm,time_to_arrival_s,arrival_raw_time,layer_idx,track_physical,track_program,direction_sign,in_laser_ellipsoid,in_track_neighborhood,hot_nodes,feature_smoke_steps,feature_validation
+reconstructed_xml_step2128,2026-09-07,configs/laser_paths/5_block_fem_additive_z_scan.xml,2128,24437,42560,2370.953613,9.91569995880127,-10.156200408935547,1.0,0.837055,0.100154,0.068363,42640.449219,9,0,103,-1,0,1,3,"2128;2129",OK

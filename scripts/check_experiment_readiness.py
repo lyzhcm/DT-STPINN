@@ -221,7 +221,7 @@ def build_ablation_dry_run(args: argparse.Namespace) -> list[str]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Read-only preflight for fixed DT-STPINN experiments")
     parser.add_argument("--vtu_dir", default="F:\\VTU")
-    parser.add_argument("--laser_xml", default="F:\\datas\\5-block-fem\\para.xml")
+    parser.add_argument("--laser_xml", default="configs\\laser_paths\\5_block_fem_additive_z_scan.xml")
     parser.add_argument(
         "--split_indices",
         default="artifacts\\baselines\\paper1_fast_50epoch_canonical_eval_20260829T185514Z\\split_indices.json",

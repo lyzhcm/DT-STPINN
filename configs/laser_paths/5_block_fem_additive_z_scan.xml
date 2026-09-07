@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Lightweight additive_z_scan path definition reconstructed from the process
+  parameters provided in the DT-STPINN experiment notes. This file contains only
+  the fields consumed by src/utils/laser_path.py, not the full solver para.xml.
+-->
+<process>
+  <heat_source>
+    <name>heat1</name>
+    <power>120</power>
+    <ellipsoid_body_source>
+      <radius>0.1</radius>
+      <height>0.1</height>
+      <radius_front>0.4</radius_front>
+      <coeff_front>1</coeff_front>
+      <radius_back>0.4</radius_back>
+      <coeff_back>1</coeff_back>
+    </ellipsoid_body_source>
+  </heat_source>
+
+  <additive_z_scan>
+    <heatsource>heat1</heatsource>
+    <velocity>600</velocity>
+    <start_point>10.3165,-10.1562,0.1</start_point>
+    <direction>0,1,0</direction>
+    <direction_length>20.3124</direction_length>
+    <z_direction>-1,0,0</z_direction>
+    <z_direction_num>104</z_direction_num>
+    <layer_num>10</layer_num>
+    <z_direction_distant>0.2004</z_direction_distant>
+    <layer_thick>0.1</layer_thick>
+    <each_path_time>0.001</each_path_time>
+    <each_layer_time>0</each_layer_time>
+    <normal>0,0,-1</normal>
+  </additive_z_scan>
+</process>
