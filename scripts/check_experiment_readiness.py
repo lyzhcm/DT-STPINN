@@ -32,6 +32,15 @@ EXPERIMENT_CONFIGS = {
     "E5": Path("configs/feature_e5_hotspot_residual.yaml"),
 }
 
+EXPECTED_RUN_NAMES = {
+    "E0": "feature_e0_baseline",
+    "E1": "feature_e1_laser_distance",
+    "E2": "feature_e2_scan_arrival",
+    "E3": "feature_e3_path_phase",
+    "E4": "feature_e4_hotspot_aux",
+    "E5": "feature_e5_hotspot_residual",
+}
+
 
 @dataclass
 class CheckResult:
@@ -174,7 +183,7 @@ def check_split(split_path: Path | None, total_steps: int | None) -> CheckResult
     )
 
 
-def check_config(exp: str, path: Path) -> CheckResult:
+def check_config(exp: str, path: Path, expected_epochs: int) -> CheckResult:
     if not path.exists():
         return CheckResult(f"{exp} config", False, f"missing {path}")
     try:
@@ -191,15 +200,45 @@ def check_config(exp: str, path: Path) -> CheckResult:
             f"data.laser_feature_group={group!r}; expected {expected_group!r}",
         )
 
+    if config.training.epochs != expected_epochs:
+        return CheckResult(
+            f"{exp} config",
+            False,
+            f"training.epochs={config.training.epochs}; expected {expected_epochs}",
+        )
+
+    expected_run_name = EXPECTED_RUN_NAMES[exp]
+    if config.logging.experiment_name != expected_run_name:
+        return CheckResult(
+            f"{exp} config",
+            False,
+            f"logging.experiment_name={config.logging.experiment_name!r}; expected {expected_run_name!r}",
+        )
+
+    if exp in {"E0", "E1", "E2", "E3"}:
+        if config.model.enable_hotspot_head or config.model.enable_laser_residual_head:
+            return CheckResult(
+                f"{exp} config",
+                False,
+                "E0-E3 must not enable hotspot or residual heads",
+            )
+
     if exp == "E4" and not config.model.enable_hotspot_head:
         return CheckResult("E4 config", False, "enable_hotspot_head must be true")
+    if exp == "E4" and config.model.enable_laser_residual_head:
+        return CheckResult("E4 config", False, "enable_laser_residual_head must be false")
+    if exp == "E5" and not config.model.enable_hotspot_head:
+        return CheckResult("E5 config", False, "enable_hotspot_head must be true")
     if exp == "E5" and not config.model.enable_laser_residual_head:
         return CheckResult("E5 config", False, "enable_laser_residual_head must be true")
 
     return CheckResult(
         f"{exp} config",
         True,
-        f"{path} feature_group={group}, hidden_dim={config.model.hidden_dim}",
+        (
+            f"{path} feature_group={group}, epochs={config.training.epochs}, "
+            f"run={config.logging.experiment_name}, hidden_dim={config.model.hidden_dim}"
+        ),
     )
 
 
@@ -332,7 +371,7 @@ def main() -> None:
         check_split(Path(args.split_indices) if args.split_indices else None, total_steps or None),
         check_baseline_artifact(Path(args.baseline_artifact) if args.baseline_artifact else None),
     ]
-    results.extend(check_config(exp, EXPERIMENT_CONFIGS[exp]) for exp in args.experiments)
+    results.extend(check_config(exp, EXPERIMENT_CONFIGS[exp], args.epochs) for exp in args.experiments)
 
     print("Fixed experiment readiness")
     for result in results:
