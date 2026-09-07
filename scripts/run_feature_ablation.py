@@ -161,6 +161,10 @@ def build_eval_command(args: argparse.Namespace, exp: Experiment, run_name: str)
         "--graph_device",
         args.graph_device,
     ]
+    if args.device != "auto":
+        cmd.extend(["--device", args.device])
+    if args.cache_dir != "data/processed":
+        cmd.extend(["--cache_dir", args.cache_dir])
     if args.split_indices:
         cmd.extend(["--split_indices", args.split_indices])
     if args.laser_xml:
