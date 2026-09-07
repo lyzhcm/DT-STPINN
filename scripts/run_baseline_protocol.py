@@ -30,6 +30,28 @@ def run_command(cmd: list[str], *, dry_run: bool) -> None:
     subprocess.run(cmd, check=True)
 
 
+def build_preflight_command(args: argparse.Namespace) -> list[str]:
+    cmd = [
+        args.python,
+        "scripts/check_experiment_readiness.py",
+        "--vtu_dir",
+        args.vtu_dir,
+        "--laser_xml",
+        args.laser_xml,
+        "--split_indices",
+        args.split_indices,
+        "--baseline_artifact",
+        args.baseline_artifact,
+        "--experiments",
+        "E0",
+        "--epochs",
+        str(args.epochs),
+        "--graph_device",
+        args.graph_device,
+        "--no_command_preview",
+    ]
+    return cmd
+
 def build_train_command(args: argparse.Namespace, run_name: str) -> list[str]:
     cmd = [
         args.python,
@@ -152,7 +174,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache_dir", default="data/processed")
     parser.add_argument(
         "--laser_xml",
-        default=None,
+        default="configs\\laser_paths\\5_block_fem_additive_z_scan.xml",
         help="Optional para.xml path passed through training/evaluation/freeze.",
     )
     parser.add_argument(
@@ -164,9 +186,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint_name", default="best_model.pt")
     parser.add_argument("--experiment_name", default=None)
     parser.add_argument("--baseline_name", default="feature_e0_baseline_50epoch")
+    parser.add_argument("--baseline_artifact", default="artifacts\\baselines\\paper1_fast_50epoch_canonical_eval_20260829T185514Z")
     parser.add_argument(
         "--split_indices",
-        default=None,
+        default="artifacts\\baselines\\paper1_fast_50epoch_canonical_eval_20260829T185514Z\\split_indices.json",
         help="Frozen split_indices.json. Omit only when creating the first frozen split.",
     )
     parser.add_argument("--resume_from_last", action="store_true")
@@ -174,6 +197,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip_eval", action="store_true")
     parser.add_argument("--skip_freeze", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
+    parser.add_argument("--no_preflight", action="store_true", help="Skip read-only readiness checks before running.")
     parser.add_argument("--notes", default="Fixed 50-epoch baseline protocol run.")
     args = parser.parse_args()
 
@@ -211,6 +235,10 @@ def main() -> None:
     print(f"  Split       : {args.split_indices or 'ratio from config'}")
     print(f"  Checkpoint  : {args.checkpoint_name}")
     print(f"  Dry run     : {args.dry_run}")
+
+    if not args.no_preflight:
+        print("\nPreflight checks")
+        run_command(build_preflight_command(args), dry_run=False)
 
     if not args.skip_train:
         run_command(train_cmd, dry_run=args.dry_run)

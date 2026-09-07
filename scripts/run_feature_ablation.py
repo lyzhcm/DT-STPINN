@@ -62,6 +62,28 @@ def run_command(cmd: list[str], *, dry_run: bool) -> None:
     subprocess.run(cmd, check=True)
 
 
+def build_preflight_command(args: argparse.Namespace) -> list[str]:
+    cmd = [
+        args.python,
+        "scripts/check_experiment_readiness.py",
+        "--vtu_dir",
+        args.vtu_dir,
+        "--laser_xml",
+        args.laser_xml,
+        "--split_indices",
+        args.split_indices,
+        "--baseline_artifact",
+        args.baseline_artifact,
+        "--experiments",
+        *args.experiments,
+        "--epochs",
+        str(args.epochs),
+        "--graph_device",
+        args.graph_device,
+        "--no_command_preview",
+    ]
+    return cmd
+
 def experiment_name(config_path: Path) -> str:
     config = Config.from_yaml(config_path)
     return config.logging.experiment_name
@@ -175,14 +197,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache_dir", default="data/processed")
     parser.add_argument(
         "--laser_xml",
-        default=None,
+        default="configs\\laser_paths\\5_block_fem_additive_z_scan.xml",
         help="Optional para.xml path passed to training/evaluation for prescribed trajectory geometry.",
     )
     parser.add_argument(
         "--split_indices",
-        default=None,
+        default="artifacts\\baselines\\paper1_fast_50epoch_canonical_eval_20260829T185514Z\\split_indices.json",
         help="Frozen split_indices.json to reuse across all experiments.",
     )
+    parser.add_argument("--baseline_artifact", default="artifacts\\baselines\\paper1_fast_50epoch_canonical_eval_20260829T185514Z")
     parser.add_argument(
         "--checkpoint_name",
         default=None,
@@ -199,6 +222,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip_train", action="store_true")
     parser.add_argument("--skip_eval", action="store_true")
     parser.add_argument("--skip_summary", action="store_true")
+    parser.add_argument("--no_preflight", action="store_true", help="Skip read-only readiness checks before running.")
     parser.add_argument("--dry_run", action="store_true")
     parser.add_argument("--summary_pattern", default="feature_e*")
     parser.add_argument("--output_csv", default="results/feature_ablation_summary.csv")
@@ -228,6 +252,10 @@ def main() -> None:
     checkpoint_label = args.checkpoint_name or "protocol default"
     print(f"  Checkpoint  : {checkpoint_label}")
     print(f"  Dry run     : {args.dry_run}")
+
+    if not args.no_preflight:
+        print("\nPreflight checks")
+        run_command(build_preflight_command(args), dry_run=False)
 
     for exp in selected:
         if not exp.config_path.is_file():
