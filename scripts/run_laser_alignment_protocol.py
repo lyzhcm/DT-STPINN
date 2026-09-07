@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import shlex
 import subprocess
 import sys
@@ -82,6 +83,19 @@ def unique_steps(steps: list[int]) -> list[int]:
         seen.add(step)
         unique.append(step)
     return unique
+
+
+def raw_time_for_step(vtu_dir: str, step: int) -> float | None:
+    pattern = re.compile(r"Data-(\d+)\.vtu$", re.IGNORECASE)
+    root = Path(vtu_dir)
+    if not root.exists():
+        return None
+    files = [path for path in root.glob("*.vtu") if pattern.match(path.name)]
+    files.sort(key=lambda path: int(pattern.match(path.name).group(1)))  # type: ignore[union-attr]
+    if step < 0 or step >= len(files):
+        return None
+    match = pattern.match(files[step].name)
+    return float(match.group(1)) if match else None
 
 
 def read_json(path: Path) -> dict[str, Any] | None:
@@ -163,6 +177,47 @@ def build_plot_command(args: argparse.Namespace, output_dir: Path, steps: list[i
     return cmd
 
 
+def build_focus_command(args: argparse.Namespace, output_csv: Path) -> list[str]:
+    focus_raw_time = raw_time_for_step(args.vtu_dir, args.focus_step)
+    cmd = [
+        args.python,
+        "scripts/diagnose_laser_alignment.py",
+        "--config",
+        args.config,
+        "--laser_xml",
+        args.laser_xml,
+        "--vtu_dir",
+        args.vtu_dir,
+        "--offset_radius_s",
+        "0",
+        "--focus_step",
+        str(args.focus_step),
+        "--focus_node",
+        str(args.focus_node),
+        "--focus_window_steps",
+        str(args.focus_window_steps),
+        "--focus_output_csv",
+        str(output_csv),
+    ]
+    if focus_raw_time is not None:
+        radius = max(float(args.focus_score_radius_raw), 0.0)
+        cmd.extend([
+            "--raw_time_min",
+            str(focus_raw_time - radius),
+            "--raw_time_max",
+            str(focus_raw_time + radius),
+        ])
+    if args.threshold is not None:
+        cmd.extend(["--solidus", str(args.threshold)])
+    if args.time_scale_to_s is not None:
+        cmd.extend(["--time_scale_to_s", str(args.time_scale_to_s)])
+    if args.time_offset_s is not None:
+        cmd.extend(["--time_offset_s", str(args.time_offset_s)])
+    if args.reverse_hatch_order_parity is not None:
+        cmd.extend(["--reverse_hatch_order_parity", str(args.reverse_hatch_order_parity)])
+    return cmd
+
+
 def command_record(phase: str, cmd: list[str], status: str) -> dict[str, str]:
     return {"phase": phase, "command": display_command(cmd), "status": status}
 
@@ -172,6 +227,7 @@ def write_manifest(
     steps: list[int],
     commands: list[dict[str, str]],
     export_dir: Path,
+    focus_csv: Path,
     plot_dir: Path,
 ) -> Path:
     trajectory_manifest = export_dir / "laser_trajectory_manifest.json"
@@ -199,6 +255,8 @@ def write_manifest(
             "hotspot_top_k": args.hotspot_top_k,
             "plot_top_k": args.plot_top_k,
             "zoom_radius_mm": args.zoom_radius_mm,
+            "focus_window_steps": args.focus_window_steps,
+            "focus_score_radius_raw": args.focus_score_radius_raw,
             "show_all_nodes": args.show_all_nodes,
             "time_scale_to_s": args.time_scale_to_s,
             "time_offset_s": args.time_offset_s,
@@ -213,6 +271,8 @@ def write_manifest(
             "segments_csv": str(export_dir / "laser_segments.csv"),
             "samples_csv": str(export_dir / "laser_samples.csv"),
             "hotspot_overlay_csv": hotspot_overlay.get("overlay_csv"),
+            "focus_window_csv": str(focus_csv),
+            "focus_window_csv_exists": focus_csv.exists(),
             "plot_summary_csv": str(plot_summary),
             "plot_summary_exists": plot_summary.exists(),
         },
@@ -233,6 +293,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_root", default="results/laser_alignment_protocol")
     parser.add_argument("--focus_step", type=int, default=2128)
     parser.add_argument("--focus_node", type=int, default=24437)
+    parser.add_argument("--focus_window_steps", type=int, default=8)
+    parser.add_argument(
+        "--focus_score_radius_raw",
+        type=float,
+        default=0.0,
+        help="Raw-time radius around focus_step used for diagnose_laser_alignment scoring.",
+    )
     parser.add_argument("--plot_steps", nargs="*", default=None,
                         help="Additional comma- or space-separated VTU sample indices to plot.")
     parser.add_argument("--threshold", type=float, default=None,
@@ -246,6 +313,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reverse_hatch_order_parity", type=int, choices=[-1, 0, 1], default=None)
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--skip_export", action="store_true")
+    parser.add_argument("--skip_focus", action="store_true")
     parser.add_argument("--skip_plot", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
     args = parser.parse_args()
@@ -259,6 +327,10 @@ def parse_args() -> argparse.Namespace:
         parser.error("--plot_top_k must be non-negative.")
     if args.zoom_radius_mm <= 0:
         parser.error("--zoom_radius_mm must be greater than zero.")
+    if args.focus_window_steps < 0:
+        parser.error("--focus_window_steps must be non-negative.")
+    if args.focus_score_radius_raw < 0:
+        parser.error("--focus_score_radius_raw must be non-negative.")
     return args
 
 
@@ -266,6 +338,7 @@ def main() -> None:
     args = parse_args()
     output_root = Path(args.output_root)
     export_dir = output_root / "trajectory"
+    focus_csv = output_root / "focus_window.csv"
     plot_dir = output_root / "plots"
     plot_steps = unique_steps([args.focus_step, *parse_steps(args.plot_steps)])
     commands: list[dict[str, str]] = []
@@ -285,6 +358,13 @@ def main() -> None:
     else:
         commands.append({"phase": "export", "command": "", "status": "skipped"})
 
+    if not args.skip_focus:
+        cmd = build_focus_command(args, focus_csv)
+        run_command(cmd, dry_run=args.dry_run)
+        commands.append(command_record("focus", cmd, "dry_run" if args.dry_run else "ok"))
+    else:
+        commands.append({"phase": "focus", "command": "", "status": "skipped"})
+
     if not args.skip_plot:
         cmd = build_plot_command(args, plot_dir, plot_steps)
         run_command(cmd, dry_run=args.dry_run)
@@ -295,7 +375,7 @@ def main() -> None:
     if args.dry_run:
         print("\nDry run complete; protocol manifest was not written.")
     else:
-        manifest_path = write_manifest(args, plot_steps, commands, export_dir, plot_dir)
+        manifest_path = write_manifest(args, plot_steps, commands, export_dir, focus_csv, plot_dir)
         print(f"\nProtocol manifest: {manifest_path}")
     print("Laser alignment protocol complete.")
 

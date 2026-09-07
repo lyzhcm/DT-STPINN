@@ -120,8 +120,8 @@ F:\anaconda3\envs\dtstpinn\python.exe scripts\run_laser_alignment_protocol.py `
   --show_all_nodes
 ```
 
-This writes the trajectory CSVs, `laser_alignment_report.md`, hotspot overlay
-CSV, hotspot PNGs, plot summary CSV, and a top-level
+This writes the trajectory CSVs, `laser_alignment_report.md`, focus-window CSV,
+hotspot overlay CSV, hotspot PNGs, plot summary CSV, and a top-level
 `laser_alignment_protocol_manifest.json` with the exact export/plot commands.
 
 Equivalent low-level commands:
@@ -143,7 +143,8 @@ This writes `laser_alignment_report.md` next to `laser_segments.csv`,
 `hot_nodes_*.csv` overlay. Treat the Markdown report as the first human-readable
 record for the step/node alignment decision.
 
-For a reusable CSV window around the known miss, run:
+The protocol writes `focus_window.csv` by default. To regenerate only the
+underlying reusable CSV window around the known miss, run:
 
 ```powershell
 F:\anaconda3\envs\dtstpinn\python.exe scripts\diagnose_laser_alignment.py `

@@ -58,6 +58,12 @@ def parse_args() -> argparse.Namespace:
                         help="Optional upper bound for time-scale sweep in seconds/raw-time.")
     parser.add_argument("--scale_steps", type=int, default=1,
                         help="Number of time-scale values to test when scale_min/max are set.")
+    parser.add_argument("--time_scale_to_s", type=float, default=None,
+                        help="Override the configured laser path time scale before scoring.")
+    parser.add_argument("--time_offset_s", type=float, default=None,
+                        help="Override the configured laser path time offset before scoring.")
+    parser.add_argument("--reverse_hatch_order_parity", type=int, choices=[-1, 0, 1], default=None,
+                        help="Override the configured hatch-order reversal parity before scoring.")
     parser.add_argument("--sweep_path_variants", action="store_true",
                         help=(
                             "Also compare XML-literal and calibrated layer/hatch "
@@ -1317,6 +1323,12 @@ def main() -> None:
     if args.laser_xml is not None:
         config.data.laser_xml_path = args.laser_xml
         config.data.laser_path_mode = "additive_z_scan"
+    if args.time_scale_to_s is not None:
+        config.data.laser_path_time_scale_to_s = float(args.time_scale_to_s)
+    if args.time_offset_s is not None:
+        config.data.laser_path_time_offset_s = float(args.time_offset_s)
+    if args.reverse_hatch_order_parity is not None:
+        config.data.laser_reverse_hatch_order_parity = int(args.reverse_hatch_order_parity)
     vtu_dir = args.vtu_dir or config.data.vtu_dir
     threshold = args.solidus if args.solidus is not None else args.hot_threshold
 
