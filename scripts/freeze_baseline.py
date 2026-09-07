@@ -132,6 +132,11 @@ def main() -> None:
     parser.add_argument("--output_dir", default="artifacts/baselines")
     parser.add_argument("--skip_verify", action="store_true", help="Skip post-freeze artifact verification.")
     parser.add_argument(
+        "--skip_protocol_args_verify",
+        action="store_true",
+        help="Do not require recorded commands to contain fixed protocol arguments.",
+    )
+    parser.add_argument(
         "--skip_report_verify",
         action="store_true",
         help="Skip acceptance metric verification for the frozen evaluation report.",
@@ -246,6 +251,8 @@ def main() -> None:
         str(out_dir),
         "--require_commands",
     ]
+    if not args.skip_protocol_args_verify:
+        verify_cmd.append("--require_protocol_args")
     if args.laser_xml:
         verify_cmd.append("--require_laser_xml")
     if not args.skip_report_verify:

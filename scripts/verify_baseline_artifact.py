@@ -138,12 +138,37 @@ def summarize_report(report_path: Path | None) -> dict[str, Any]:
     return {key: candidate[key] for key in keys if key in candidate}
 
 
+def command_contains_value(command: str, value: str) -> bool:
+    if not value:
+        return True
+    candidates = {value, value.replace("/", "\\"), value.replace("\\", "/")}
+    return any(candidate and candidate in command for candidate in candidates)
+
+
+def require_command_option(
+    checks: list[tuple[bool, str]],
+    command: str,
+    command_label: str,
+    option: str,
+    value: str = "",
+) -> None:
+    has_option = option in command
+    has_value = command_contains_value(command, value)
+    detail = option if not value else f"{option} {value}"
+    add_check(checks, has_option and has_value, f"{command_label}: contains {detail}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("artifact_dir", help="Frozen baseline artifact directory")
     parser.add_argument("--require_laser_xml", action="store_true")
     parser.add_argument("--require_acceptance_artifacts", action="store_true")
     parser.add_argument("--require_commands", action="store_true")
+    parser.add_argument(
+        "--require_protocol_args",
+        action="store_true",
+        help="Require recorded train/evaluate commands to contain fixed protocol arguments.",
+    )
     parser.add_argument("--require_clean_git", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
@@ -239,6 +264,29 @@ def main() -> None:
     if args.require_commands:
         add_check(checks, bool(train_cmd), "train command recorded")
         add_check(checks, bool(eval_cmd), "evaluate command recorded")
+    if args.require_protocol_args:
+        config_record = artifacts.get("config") if isinstance(artifacts, dict) else {}
+        checkpoint_record = artifacts.get("checkpoint") if isinstance(artifacts, dict) else {}
+        config_source = str(config_record.get("source", "")) if isinstance(config_record, dict) else ""
+        checkpoint_source = str(checkpoint_record.get("source", "")) if isinstance(checkpoint_record, dict) else ""
+        vtu_dir = str(manifest.get("vtu_dir", ""))
+        seed = manifest.get("seed")
+        split_source = str(split_record.get("source", "")) if split_record else ""
+        split_source_path = split_source.removeprefix("frozen:") if split_source.startswith("frozen:") else ""
+        laser_xml = str(manifest.get("laser_xml", ""))
+
+        require_command_option(checks, train_cmd, "train command", "--config", config_source)
+        require_command_option(checks, eval_cmd, "evaluate command", "--config", config_source)
+        require_command_option(checks, train_cmd, "train command", "--vtu_dir", vtu_dir)
+        require_command_option(checks, eval_cmd, "evaluate command", "--vtu_dir", vtu_dir)
+        require_command_option(checks, train_cmd, "train command", "--seed", str(seed) if seed is not None else "")
+        require_command_option(checks, eval_cmd, "evaluate command", "--checkpoint", checkpoint_source)
+        if split_source_path:
+            require_command_option(checks, train_cmd, "train command", "--split_indices", split_source_path)
+            require_command_option(checks, eval_cmd, "evaluate command", "--split_indices", split_source_path)
+        if laser_xml:
+            require_command_option(checks, train_cmd, "train command", "--laser_xml", laser_xml)
+            require_command_option(checks, eval_cmd, "evaluate command", "--laser_xml", laser_xml)
 
     git = manifest.get("git") if isinstance(manifest.get("git"), dict) else {}
     commit = str(git.get("commit", "")) if git else ""
