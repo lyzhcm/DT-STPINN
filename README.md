@@ -79,7 +79,7 @@ To rerun and freeze the single 50-epoch baseline control with one command, use:
 python scripts\run_baseline_protocol.py `
   --config configs\feature_e0_baseline.yaml `
   --vtu_dir F:\VTU `
-  --laser_xml F:\datas\5-block-fem\para.xml `
+  --laser_xml configs\laser_paths\5_block_fem_additive_z_scan.xml `
   --epochs 50 `
   --graph_device cuda `
   --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
@@ -94,7 +94,7 @@ python scripts\evaluate_checkpoint.py `
   --config configs\feature_e0_baseline.yaml `
   --checkpoint logs\feature_e0_baseline\best_model.pt `
   --vtu_dir F:\VTU `
-  --laser_xml F:\datas\5-block-fem\para.xml `
+  --laser_xml configs\laser_paths\5_block_fem_additive_z_scan.xml `
   --output_dir logs\feature_e0_baseline `
   --graph_device cuda `
   --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json
@@ -122,17 +122,21 @@ Before starting a long run, use the read-only preflight check:
 ```powershell
 python scripts\check_experiment_readiness.py `
   --vtu_dir F:\VTU `
-  --laser_xml F:\datas\5-block-fem\para.xml `
+  --laser_xml configs\laser_paths\5_block_fem_additive_z_scan.xml `
+  --reference_laser_xml F:\datas\5-block-fem\para.xml `
   --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
   --experiments E0 E1 E2 E3
 ```
+
+Add `--strict_reference_laser_xml` when the original `para.xml` must be present
+and must match the tracked reconstructed XML before launching a long run.
 
 Dry-run the protocol:
 
 ```powershell
 python scripts\run_feature_ablation.py `
   --vtu_dir F:\VTU `
-  --laser_xml F:\datas\5-block-fem\para.xml `
+  --laser_xml configs\laser_paths\5_block_fem_additive_z_scan.xml `
   --epochs 50 `
   --graph_device cuda `
   --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
@@ -146,7 +150,7 @@ Run only the fixed baseline first:
 python scripts\run_feature_ablation.py `
   --experiments E0 `
   --vtu_dir F:\VTU `
-  --laser_xml F:\datas\5-block-fem\para.xml `
+  --laser_xml configs\laser_paths\5_block_fem_additive_z_scan.xml `
   --epochs 50 `
   --graph_device cuda `
   --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
@@ -158,7 +162,7 @@ Run the complete E0-E3 protocol:
 ```powershell
 python scripts\run_feature_ablation.py `
   --vtu_dir F:\VTU `
-  --laser_xml F:\datas\5-block-fem\para.xml `
+  --laser_xml configs\laser_paths\5_block_fem_additive_z_scan.xml `
   --epochs 50 `
   --graph_device cuda `
   --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
@@ -176,7 +180,7 @@ After E0-E3 confirm whether real trajectory features improve hotspot recall, run
 python scripts\run_feature_ablation.py `
   --experiments E4 E5 `
   --vtu_dir F:\VTU `
-  --laser_xml F:\datas\5-block-fem\para.xml `
+  --laser_xml configs\laser_paths\5_block_fem_additive_z_scan.xml `
   --epochs 50 `
   --graph_device cuda `
   --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
@@ -190,10 +194,16 @@ E4/E5 evaluate their protocol `best_hot_model.pt` by default. E4 selects that ch
 Before feature ablations, diagnose path timing and scan-direction alignment:
 
 ```powershell
+python scripts\compare_laser_xml.py `
+  --reference F:\datas\5-block-fem\para.xml `
+  --candidate configs\laser_paths\5_block_fem_additive_z_scan.xml
+```
+
+```powershell
 python scripts\diagnose_laser_alignment.py `
   --config configs\feature_e3_path_phase.yaml `
   --vtu_dir F:\VTU `
-  --laser_xml F:\datas\5-block-fem\para.xml `
+  --laser_xml configs\laser_paths\5_block_fem_additive_z_scan.xml `
   --focus_step 2128 `
   --focus_node 24437 `
   --gate_coverage `
@@ -205,7 +215,7 @@ Export and diagnose the laser path around the known worst hotspot:
 ```powershell
 python scripts\export_laser_trajectory.py `
   --config configs\feature_e3_path_phase.yaml `
-  --laser_xml F:\datas\5-block-fem\para.xml `
+  --laser_xml configs\laser_paths\5_block_fem_additive_z_scan.xml `
   --vtu_dir F:\VTU `
   --output_dir results\laser_trajectory_step2128_smoke `
   --diagnose_step_index 2128 `
@@ -219,7 +229,7 @@ Plot laser position against high-temperature nodes:
 ```powershell
 python scripts\plot_laser_hotspots.py `
   --config configs\feature_e3_path_phase.yaml `
-  --laser_xml F:\datas\5-block-fem\para.xml `
+  --laser_xml configs\laser_paths\5_block_fem_additive_z_scan.xml `
   --vtu_dir F:\VTU `
   --steps 2128 `
   --output_dir results\laser_hotspot_alignment_smoke `

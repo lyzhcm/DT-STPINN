@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config import Config
 from src.data.preprocessing import load_split_indices
+from src.utils.laser_path import AdditiveZScanPath
+from scripts.compare_laser_xml import compare_processes, process_dict
 
 
 EXPERIMENT_CONFIGS = {
@@ -105,7 +107,55 @@ def check_xml(xml_path: Path | None, search_roots: list[str], max_candidates: in
         else:
             suggestion = "; no XML candidates found under " + ", ".join(search_roots)
         return CheckResult("laser XML", False, f"missing {xml_path}{suggestion}")
-    return CheckResult("laser XML", True, str(xml_path))
+    try:
+        path = AdditiveZScanPath.from_xml(xml_path)
+    except Exception as exc:  # noqa: BLE001
+        return CheckResult("laser XML", False, f"could not parse {xml_path}: {exc}")
+    return CheckResult(
+        "laser XML",
+        True,
+        f"{xml_path}, layers={path.layer_count}, tracks/layer={path.hatch_count}, velocity={path.velocity_mm_s:g}",
+    )
+
+
+def check_xml_reference(
+    candidate_path: Path | None,
+    reference_path: Path | None,
+    *,
+    strict: bool,
+    rtol: float,
+    atol: float,
+) -> CheckResult:
+    if reference_path is None:
+        return CheckResult("laser XML reference", True, "not requested")
+    if candidate_path is None or not candidate_path.exists():
+        return CheckResult("laser XML reference", True, "skipped until --laser_xml exists")
+    if not reference_path.exists():
+        return CheckResult(
+            "laser XML reference",
+            not strict,
+            f"reference missing {reference_path}; candidate parsed only",
+        )
+
+    try:
+        reference = process_dict(AdditiveZScanPath.from_xml(reference_path))
+        candidate = process_dict(AdditiveZScanPath.from_xml(candidate_path))
+    except Exception as exc:  # noqa: BLE001
+        return CheckResult("laser XML reference", False, f"could not parse XML for comparison: {exc}")
+
+    rows = compare_processes(reference, candidate, rtol=rtol, atol=atol)
+    mismatches = [row["field"] for row in rows if not row["match"]]
+    if mismatches:
+        return CheckResult(
+            "laser XML reference",
+            False,
+            "process mismatch in " + ", ".join(mismatches),
+        )
+    return CheckResult(
+        "laser XML reference",
+        True,
+        f"matches {reference_path}",
+    )
 
 
 def check_split(split_path: Path | None, total_steps: int | None) -> CheckResult:
@@ -223,6 +273,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vtu_dir", default="F:\\VTU")
     parser.add_argument("--laser_xml", default="configs\\laser_paths\\5_block_fem_additive_z_scan.xml")
     parser.add_argument(
+        "--reference_laser_xml",
+        default="F:\\datas\\5-block-fem\\para.xml",
+        help="Original solver para.xml to compare against when available.",
+    )
+    parser.add_argument(
+        "--strict_reference_laser_xml",
+        action="store_true",
+        help="Fail readiness if --reference_laser_xml is missing instead of warning.",
+    )
+    parser.add_argument("--xml_compare_rtol", type=float, default=1.0e-6)
+    parser.add_argument("--xml_compare_atol", type=float, default=1.0e-8)
+    parser.add_argument(
         "--split_indices",
         default="artifacts\\baselines\\paper1_fast_50epoch_canonical_eval_20260829T185514Z\\split_indices.json",
     )
@@ -259,6 +321,13 @@ def main() -> None:
             Path(args.laser_xml) if args.laser_xml else None,
             args.xml_search_roots,
             args.xml_search_max,
+        ),
+        check_xml_reference(
+            Path(args.laser_xml) if args.laser_xml else None,
+            Path(args.reference_laser_xml) if args.reference_laser_xml else None,
+            strict=args.strict_reference_laser_xml,
+            rtol=args.xml_compare_rtol,
+            atol=args.xml_compare_atol,
         ),
         check_split(Path(args.split_indices) if args.split_indices else None, total_steps or None),
         check_baseline_artifact(Path(args.baseline_artifact) if args.baseline_artifact else None),

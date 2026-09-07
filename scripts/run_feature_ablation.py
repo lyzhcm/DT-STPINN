@@ -70,6 +70,8 @@ def build_preflight_command(args: argparse.Namespace) -> list[str]:
         args.vtu_dir,
         "--laser_xml",
         args.laser_xml,
+        "--reference_laser_xml",
+        args.reference_laser_xml,
         "--split_indices",
         args.split_indices,
         "--baseline_artifact",
@@ -82,6 +84,8 @@ def build_preflight_command(args: argparse.Namespace) -> list[str]:
         args.graph_device,
         "--no_command_preview",
     ]
+    if args.strict_reference_laser_xml:
+        cmd.append("--strict_reference_laser_xml")
     return cmd
 
 def experiment_name(config_path: Path) -> str:
@@ -231,6 +235,16 @@ def parse_args() -> argparse.Namespace:
         "--laser_xml",
         default="configs\\laser_paths\\5_block_fem_additive_z_scan.xml",
         help="Optional para.xml path passed to training/evaluation for prescribed trajectory geometry.",
+    )
+    parser.add_argument(
+        "--reference_laser_xml",
+        default="F:\\datas\\5-block-fem\\para.xml",
+        help="Original solver para.xml compared during preflight when available.",
+    )
+    parser.add_argument(
+        "--strict_reference_laser_xml",
+        action="store_true",
+        help="Fail preflight unless --reference_laser_xml exists and matches --laser_xml.",
     )
     parser.add_argument(
         "--split_indices",

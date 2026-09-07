@@ -80,12 +80,15 @@ test_TempFNAboveSolidus: 20
 F:\anaconda3\envs\dtstpinn\python.exe scripts\check_experiment_readiness.py `
   --vtu_dir F:\VTU `
   --laser_xml configs\laser_paths\5_block_fem_additive_z_scan.xml `
+  --reference_laser_xml F:\datas\5-block-fem\para.xml `
   --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
   --experiments E0 E1 E2 E3
 ```
 
 This check should pass before launching any 50-epoch control or feature
-ablation. It is read-only and prints the dry-run baseline and ablation commands.
+ablation. It is read-only, parses the candidate laser XML, compares it against
+the original `para.xml` when available, and prints the dry-run baseline and
+ablation commands.
 
 ### 2. Verify XML path visibility
 
@@ -95,6 +98,9 @@ Test-Path F:\datas\5-block-fem\para.xml
 
 If this prints `False`, either restore the file at that path or pass the correct
 XML path to `--laser_xml` / `--xml`.
+
+To require a hard original-vs-reconstructed XML match before long runs, add
+`--strict_reference_laser_xml` to the readiness command.
 
 ### 3. Export and check trajectory alignment at the known worst point
 
