@@ -7,6 +7,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -124,9 +125,15 @@ def write_samples(path: AdditiveZScanPath, out_path: Path, raw_times: list[float
             ])
 
 
-def write_hot_nodes(path: AdditiveZScanPath, args, raw_times: list[float], raw_origin: float, out_dir: Path) -> None:
+def write_hot_nodes(
+    path: AdditiveZScanPath,
+    args,
+    raw_times: list[float],
+    raw_origin: float,
+    out_dir: Path,
+) -> dict[str, Any] | None:
     if not args.hotspot_vtu and args.hotspot_step_index is None:
-        return
+        return None
 
     if args.hotspot_step_index is not None:
         if not args.vtu_dir:
@@ -143,14 +150,42 @@ def write_hot_nodes(path: AdditiveZScanPath, args, raw_times: list[float], raw_o
     node_indices = np.flatnonzero(mask)
     coords = data.coords.numpy()[node_indices]
     temps = data.temperature.numpy()[node_indices]
+    state = path.state_at_raw_time(raw_time, raw_origin=raw_origin)
+    laser = np.asarray(state["position"], dtype=np.float64)
+    summary: dict[str, Any] = {
+        "vtu_file": str(source_path),
+        "sample_index": int(args.hotspot_step_index) if args.hotspot_step_index is not None else None,
+        "raw_time": float(raw_time),
+        "threshold": float(args.hotspot_threshold),
+        "hot_node_count": int(node_indices.size),
+        "laser_x_mm": float(laser[0]),
+        "laser_y_mm": float(laser[1]),
+        "laser_z_mm": float(laser[2]),
+    }
     if coords.size == 0:
         print(f"No nodes above {args.hotspot_threshold} in {source_path}")
-        return
+        return summary
 
     order = np.argsort(-temps)
     if args.hotspot_top_k is not None:
         order = order[:args.hotspot_top_k]
     features, columns = path.node_process_features(coords, raw_time, raw_origin=raw_origin)
+    column_index = {name: idx for idx, name in enumerate(columns)}
+    distances = features[:, column_index["distance_to_laser_mm"]]
+    ellipsoid_flags = features[:, column_index["in_laser_ellipsoid"]]
+    track_flags = features[:, column_index["in_track_neighborhood"]]
+    hottest = int(np.argmax(temps))
+    nearest = int(np.argmin(distances))
+    summary.update({
+        "hottest_node_index": int(node_indices[hottest]),
+        "hottest_temperature": float(temps[hottest]),
+        "hottest_distance_to_laser_mm": float(distances[hottest]),
+        "nearest_hot_node_index": int(node_indices[nearest]),
+        "nearest_hot_temperature": float(temps[nearest]),
+        "nearest_hot_distance_to_laser_mm": float(distances[nearest]),
+        "hot_in_laser_ellipsoid_count": int(ellipsoid_flags.sum()),
+        "hot_in_track_neighborhood_count": int(track_flags.sum()),
+    })
     out_path = out_dir / f"hot_nodes_{source_path.stem}.csv"
     with out_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
@@ -164,6 +199,99 @@ def write_hot_nodes(path: AdditiveZScanPath, args, raw_times: list[float], raw_o
                 *features[i].tolist(),
             ])
     print(f"Hot-node overlay CSV: {out_path}")
+    summary["overlay_csv"] = str(out_path)
+    return summary
+
+
+def fmt_float(value: object, digits: int = 6) -> str:
+    if value is None:
+        return "n/a"
+    try:
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def write_alignment_report(
+    meta: dict[str, Any],
+    segments_path: Path,
+    samples_path: Path,
+    manifest_path: Path,
+    out_path: Path,
+) -> None:
+    node_diag = meta.get("node_index_diagnosis") or meta.get("diagnosis")
+    hotspot = meta.get("hotspot_overlay")
+    lines = [
+        "# Laser Trajectory Alignment Report",
+        "",
+        "## Inputs",
+        "",
+        f"- Config: `{meta.get('config')}`",
+        f"- XML: `{meta.get('xml')}`",
+        f"- Raw origin: {fmt_float(meta.get('raw_origin'), 6)}",
+        f"- Samples: {meta.get('num_samples')}",
+        f"- Time scale: {fmt_float(meta.get('time_scale_to_s'), 12)} s/raw",
+        f"- Time offset: {fmt_float(meta.get('time_offset_s'), 12)} s",
+        f"- Reverse hatch order parity: {meta.get('reverse_hatch_order_parity')}",
+        "",
+        "## Path Timing",
+        "",
+        f"- Scan time per track: {fmt_float(meta.get('scan_time_s'), 6)} s",
+        f"- Path period: {fmt_float(meta.get('path_period_s'), 6)} s",
+        f"- Layer period: {fmt_float(meta.get('layer_period_s'), 6)} s",
+        f"- Total tracks: {meta.get('total_tracks')}",
+        "",
+    ]
+
+    if isinstance(node_diag, dict):
+        coord = node_diag.get("coord_mm", [])
+        lines.extend([
+            "## Node Diagnosis",
+            "",
+            f"- Sample index: {node_diag.get('sample_index', 'n/a')}",
+            f"- VTU file: `{node_diag.get('vtu_file', 'n/a')}`",
+            f"- Raw time: {fmt_float(node_diag.get('raw_time'), 3)}",
+            f"- Node index: {node_diag.get('node_index', 'n/a')}",
+            f"- Coordinate mm: {json.dumps(coord)}",
+            f"- Temperature C: {fmt_float(node_diag.get('temperature'), 4)}",
+            f"- Laser xyz mm: [{fmt_float(node_diag.get('laser_x_mm'), 6)}, {fmt_float(node_diag.get('laser_y_mm'), 6)}, {fmt_float(node_diag.get('laser_z_mm'), 6)}]",
+            f"- Distance to laser: {fmt_float(node_diag.get('distance_to_laser_mm'), 6)} mm",
+            f"- Line along/cross: {fmt_float(node_diag.get('line_along_mm'), 6)} / {fmt_float(node_diag.get('line_cross_mm'), 6)} mm",
+            f"- Time to arrival: {fmt_float(node_diag.get('time_to_arrival_s'), 6)} s",
+            f"- Arrival raw time: {fmt_float(node_diag.get('arrival_raw_time'), 3)}",
+            f"- Layer/track: {fmt_float(node_diag.get('layer_idx'), 0)} / {fmt_float(node_diag.get('track_physical'), 0)} physical / {fmt_float(node_diag.get('track_program'), 0)} program",
+            f"- Direction sign: {fmt_float(node_diag.get('direction_sign'), 0)}",
+            f"- In laser ellipsoid: {fmt_float(node_diag.get('in_laser_ellipsoid'), 0)}",
+            f"- In track neighborhood: {fmt_float(node_diag.get('in_track_neighborhood'), 0)}",
+            "",
+        ])
+
+    if isinstance(hotspot, dict):
+        lines.extend([
+            "## Hotspot Overlay",
+            "",
+            f"- VTU file: `{hotspot.get('vtu_file')}`",
+            f"- Sample index: {hotspot.get('sample_index')}",
+            f"- Raw time: {fmt_float(hotspot.get('raw_time'), 3)}",
+            f"- Threshold C: {fmt_float(hotspot.get('threshold'), 2)}",
+            f"- Hot nodes: {hotspot.get('hot_node_count')}",
+            f"- Hottest node: {hotspot.get('hottest_node_index', 'n/a')} at {fmt_float(hotspot.get('hottest_temperature'), 4)} C, distance {fmt_float(hotspot.get('hottest_distance_to_laser_mm'), 6)} mm",
+            f"- Nearest hot node: {hotspot.get('nearest_hot_node_index', 'n/a')} at {fmt_float(hotspot.get('nearest_hot_temperature'), 4)} C, distance {fmt_float(hotspot.get('nearest_hot_distance_to_laser_mm'), 6)} mm",
+            f"- Hot nodes in laser ellipsoid: {hotspot.get('hot_in_laser_ellipsoid_count', 'n/a')}",
+            f"- Hot nodes in track neighborhood: {hotspot.get('hot_in_track_neighborhood_count', 'n/a')}",
+            f"- Overlay CSV: `{hotspot.get('overlay_csv', 'n/a')}`",
+            "",
+        ])
+
+    lines.extend([
+        "## Generated Files",
+        "",
+        f"- Segments CSV: `{segments_path}`",
+        f"- Samples CSV: `{samples_path}`",
+        f"- Manifest JSON: `{manifest_path}`",
+        "",
+    ])
+    out_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def main() -> None:
@@ -273,12 +401,17 @@ def main() -> None:
         print("Node-index diagnosis:")
         print(json.dumps(meta["node_index_diagnosis"], indent=2))
 
-    write_hot_nodes(path, args, raw_times, raw_origin, out_dir)
+    hotspot_summary = write_hot_nodes(path, args, raw_times, raw_origin, out_dir)
+    if hotspot_summary is not None:
+        meta["hotspot_overlay"] = hotspot_summary
     meta_path = out_dir / "laser_trajectory_manifest.json"
     meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    report_path = out_dir / "laser_alignment_report.md"
+    write_alignment_report(meta, segments_path, samples_path, meta_path, report_path)
     print(f"Segments CSV: {segments_path}")
     print(f"Samples CSV: {samples_path}")
     print(f"Manifest: {meta_path}")
+    print(f"Report: {report_path}")
 
 
 if __name__ == "__main__":

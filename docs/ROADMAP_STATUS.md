@@ -116,6 +116,11 @@ F:\anaconda3\envs\dtstpinn\python.exe scripts\export_laser_trajectory.py `
   --hotspot_top_k 20
 ```
 
+This writes `laser_alignment_report.md` next to `laser_segments.csv`,
+`laser_samples.csv`, `laser_trajectory_manifest.json`, and the optional
+`hot_nodes_*.csv` overlay. Treat the Markdown report as the first human-readable
+record for the step/node alignment decision.
+
 ```powershell
 F:\anaconda3\envs\dtstpinn\python.exe scripts\plot_laser_hotspots.py `
   --config configs\feature_e3_path_phase.yaml `
