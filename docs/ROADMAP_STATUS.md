@@ -23,7 +23,7 @@ files, logs, preprocessed tensors, and per-run artifacts remain local-only.
 | 1 | Fixed split and evaluation script | Done in code | `src/data/preprocessing.py`, `scripts/train.py`, `scripts/evaluate.py`, `scripts/evaluate_checkpoint.py`, and protocol wrappers accept `--split_indices`; `scripts/run_baseline_protocol.py` and `scripts/run_feature_ablation.py` now default to the frozen split and run readiness checks before training. | Use the same `split_indices.json` in every long experiment. |
 | 2 | Close z24x | Done | `results/z241_z245_summary.md`, `results/z241_z245_summary.csv`, and `results/z241_z245_decision.md`. | Do not add z246+ threshold/gate tuning unless the roadmap changes. |
 | 3 | Verify XML laser trajectory alignment | Done with reconstructed XML protocol | `results\laser_alignment_protocol\laser_alignment_protocol_manifest.json` was generated from `F:\VTU` and `configs\laser_paths\5_block_fem_additive_z_scan.xml`; `scripts\verify_laser_alignment_protocol.py` passed with 17 focus-window rows, trajectory CSVs, hotspot overlay summary, and step 2128/node 24437 context. | Restore or point to the original full `para.xml` before final long-run approval if exact source-file provenance is required. |
-| 4 | Build trajectory feature dataset | Done in code, smoke-tested | `scripts/build_laser_feature_dataset.py` and `scripts/check_laser_feature_dataset.py` cover E1/E2/E3 columns and split-aware generation; `scripts/run_laser_feature_dataset_protocol.py` builds and validates train/val/test manifests; reconstructed-XML smoke validates train/val/test chunks; fixed node coordinates are stored once per split as `coords_mm.npy` by default, with legacy `--embed_coords` support. | Generate full train/val/test chunks from the approved XML path before long E1-E3 runs. |
+| 4 | Build trajectory feature dataset | Done with full local dataset | `data\processed\laser_features_e0_e3\laser_feature_dataset_manifest.json` was generated from `F:\VTU`, the frozen split, and `configs\laser_paths\5_block_fem_additive_z_scan.xml`; train/val/test manifests all passed `scripts\check_laser_feature_dataset.py --feature_group all --require_xml`. | Keep this local-only dataset for E1-E3 runs; rebuild only if the approved XML path, split, or feature definitions change. |
 | 5 | Minimal feature ablations E0-E3 | Ready to run, E0-E3 smoke-tested | `configs/feature_e0_baseline.yaml` through `configs/feature_e3_path_phase.yaml`; `scripts/run_feature_ablation.py` supports fixed split, seed, XML, checkpoint protocol, resume, default preflight, and post-evaluation report verification; `results\e0_e3_training_smoke.md` verifies E0-E3 training entrypoints with fixed split and reconstructed XML. | Run E0 first as the only long-run control, then E1-E3 under the same protocol. |
 | 6 | Hotspot auxiliary task | Done in code | `configs/feature_e4_hotspot_aux.yaml`, model hot head support, trainer/evaluator solidus and liquidus metrics. | Run E4 only after E1-E3 confirm whether trajectory features help. |
 | 7 | Conditional high-temperature residual head | Done in code | `configs/feature_e5_hotspot_residual.yaml`; `src/model.py` supports `T_pred = T_base + P_hot * delta_hot` via hotspot gate mix. | Run E5 after E4 under the same protocol. |
@@ -71,6 +71,35 @@ test_TempTPAboveSolidus: 347
 test_TempFPAboveSolidus: 607
 test_TempFNAboveSolidus: 20
 ```
+
+## Laser Feature Dataset Evidence
+
+Full local trajectory feature chunks for E1-E3 were generated on 2026-09-07:
+
+```text
+Root: data\processed\laser_features_e0_e3
+Protocol manifest: data\processed\laser_features_e0_e3\laser_feature_dataset_manifest.json
+Git commit recorded by manifest: f2ce211934040699ca33113972c9ac137032a2c0
+Config: configs\feature_e3_path_phase.yaml
+Laser XML: configs\laser_paths\5_block_fem_additive_z_scan.xml
+Split: artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json
+Reference XML: F:\datas\5-block-fem\para.xml was not visible, so the reconstructed XML was used.
+```
+
+Split coverage and validation summary:
+
+```text
+train: 1648 chunks, steps 4..1651, 4.50 GiB, min laser distance 0.092687 mm, ellipsoid hits 621, track-neighborhood hits 75,308,656
+val:    354 chunks, steps 1652..2005, 0.97 GiB, min laser distance 0.096500 mm, ellipsoid hits 158, track-neighborhood hits 16,176,738
+test:   355 chunks, steps 2006..2360, 0.96 GiB, min laser distance 0.096746 mm, ellipsoid hits 38, track-neighborhood hits 16,222,435
+```
+
+Each split passed the feature checker with `--feature_group all --require_xml`.
+Required E1-E3 feature columns include current/target laser coordinates,
+`dx/dy/dz`, distance to laser, current and scan-line along/cross distances,
+`time_to_arrival_s`, arrival raw time, layer, track, scan direction, and
+ellipsoid/track-neighborhood markers. The chunks are local-only and ignored by
+git.
 
 ## Next Commands
 
