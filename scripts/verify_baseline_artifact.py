@@ -16,6 +16,11 @@ from typing import Any
 
 
 REQUIRED_ARTIFACT_KEYS = ("config", "checkpoint", "test_report")
+ACCEPTANCE_ARTIFACT_KEYS = (
+    "acceptance_summary.json",
+    "acceptance_summary.csv",
+    "worst_cases_top10.csv",
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -137,6 +142,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("artifact_dir", help="Frozen baseline artifact directory")
     parser.add_argument("--require_laser_xml", action="store_true")
+    parser.add_argument("--require_acceptance_artifacts", action="store_true")
     parser.add_argument("--require_commands", action="store_true")
     parser.add_argument("--require_clean_git", action="store_true")
     parser.add_argument("--quiet", action="store_true")
@@ -169,6 +175,18 @@ def main() -> None:
             key,
             artifacts.get(key) if isinstance(artifacts, dict) else None,
             required=True,
+        )
+
+    acceptance_artifacts = manifest.get("acceptance_artifacts")
+    if not isinstance(acceptance_artifacts, dict):
+        acceptance_artifacts = {}
+    for key in ACCEPTANCE_ARTIFACT_KEYS:
+        check_hash_record(
+            checks,
+            root,
+            key,
+            acceptance_artifacts.get(key),
+            required=args.require_acceptance_artifacts,
         )
 
     split_record = manifest.get("split_indices") if isinstance(manifest.get("split_indices"), dict) else None
