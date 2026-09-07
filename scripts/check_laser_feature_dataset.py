@@ -21,6 +21,28 @@ REQUIRED_COLUMNS = [
     "in_laser_ellipsoid", "in_track_neighborhood",
 ]
 
+FEATURE_GROUPS = {
+    "E1": [
+        "laser_x_mm", "laser_y_mm", "laser_z_mm",
+        "dx_mm", "dy_mm", "dz_mm", "distance_to_laser_mm",
+    ],
+    "E2": [
+        "laser_x_mm", "laser_y_mm", "laser_z_mm",
+        "dx_mm", "dy_mm", "dz_mm", "distance_to_laser_mm",
+        "current_along_mm", "current_cross_mm",
+        "line_along_mm", "line_cross_mm", "time_to_arrival_s", "arrival_raw_time",
+    ],
+    "E3": [
+        "laser_x_mm", "laser_y_mm", "laser_z_mm",
+        "dx_mm", "dy_mm", "dz_mm", "distance_to_laser_mm",
+        "current_along_mm", "current_cross_mm",
+        "line_along_mm", "line_cross_mm", "time_to_arrival_s", "arrival_raw_time",
+        "layer_idx", "track_physical", "track_program", "direction_sign",
+        "layer_norm", "track_physical_norm", "track_program_norm",
+        "in_laser_ellipsoid", "in_track_neighborhood",
+    ],
+}
+
 BINARY_COLUMNS = ["in_laser_ellipsoid", "in_track_neighborhood"]
 NORMALIZED_COLUMNS = ["layer_norm", "track_physical_norm", "track_program_norm"]
 
@@ -43,16 +65,54 @@ def resolve_chunk_path(manifest_path: Path, chunk: dict[str, Any]) -> Path:
     return manifest_path.parent / chunk_path
 
 
-def validate_columns(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
+def validate_columns(manifest: dict[str, Any], feature_groups: list[str]) -> tuple[list[str], list[str]]:
     columns = [str(c) for c in manifest.get("columns", [])]
     missing = [name for name in REQUIRED_COLUMNS if name not in columns]
     group_errors: list[str] = []
     column_set = set(columns)
-    for group, group_columns in (manifest.get("feature_groups") or {}).items():
+    manifest_groups = manifest.get("feature_groups") or {}
+    if not isinstance(manifest_groups, dict):
+        group_errors.append("feature_groups must be a JSON object")
+        manifest_groups = {}
+
+    for group in feature_groups:
+        canonical_columns = FEATURE_GROUPS[group]
+        manifest_columns = [str(c) for c in manifest_groups.get(group, canonical_columns)]
+        canonical_absent = [name for name in canonical_columns if name not in column_set]
+        if canonical_absent:
+            group_errors.append(f"{group}: missing canonical columns {', '.join(canonical_absent)}")
+        manifest_absent = [name for name in manifest_columns if name not in column_set]
+        if manifest_absent:
+            group_errors.append(f"{group}: missing manifest columns {', '.join(manifest_absent)}")
+        if group in manifest_groups:
+            manifest_set = set(manifest_columns)
+            canonical_set = set(canonical_columns)
+            if manifest_set != canonical_set:
+                missing_from_manifest = [name for name in canonical_columns if name not in manifest_set]
+                extra_in_manifest = [name for name in manifest_columns if name not in canonical_set]
+                details: list[str] = []
+                if missing_from_manifest:
+                    details.append("missing " + ", ".join(missing_from_manifest))
+                if extra_in_manifest:
+                    details.append("extra " + ", ".join(extra_in_manifest))
+                group_errors.append(f"{group}: manifest group definition drift ({'; '.join(details)})")
+
+    for group, group_columns in manifest_groups.items():
         absent = [str(c) for c in group_columns if str(c) not in column_set]
         if absent:
             group_errors.append(f"{group}: missing {', '.join(absent)}")
     return missing, group_errors
+
+
+def parse_feature_groups(value: str) -> list[str]:
+    group = value.upper()
+    if group == "ALL":
+        return list(FEATURE_GROUPS)
+    if group not in FEATURE_GROUPS:
+        raise argparse.ArgumentTypeError(
+            f"Expected one of {', '.join(['all', *FEATURE_GROUPS])}, got {value!r}"
+        )
+    return [group]
 
 
 def validate_manifest_consistency(manifest: dict[str, Any], require_xml: bool) -> list[str]:
@@ -185,6 +245,11 @@ def main() -> None:
     parser.add_argument("--output_csv", default=None)
     parser.add_argument("--max_chunks", type=int, default=None)
     parser.add_argument("--step", type=int, default=None, help="Only inspect this target step")
+    parser.add_argument(
+        "--feature_group",
+        default="all",
+        help="Validate canonical E1, E2, E3, or all group columns. Default: all.",
+    )
     parser.add_argument("--node_index", type=int, default=None, help="Optional node row to include in the JSON report")
     parser.add_argument(
         "--require_xml",
@@ -195,7 +260,11 @@ def main() -> None:
 
     manifest_path = Path(args.manifest)
     manifest = load_manifest(manifest_path)
-    missing_columns, group_errors = validate_columns(manifest)
+    try:
+        requested_feature_groups = parse_feature_groups(args.feature_group)
+    except argparse.ArgumentTypeError as exc:
+        parser.error(str(exc))
+    missing_columns, group_errors = validate_columns(manifest, requested_feature_groups)
     errors = [f"missing required column: {name}" for name in missing_columns]
     errors.extend(group_errors)
     errors.extend(validate_manifest_consistency(manifest, require_xml=args.require_xml))
@@ -235,6 +304,8 @@ def main() -> None:
         "num_checked_chunks": len(summaries),
         "num_columns": len(columns),
         "required_columns": REQUIRED_COLUMNS,
+        "requested_feature_groups": requested_feature_groups,
+        "canonical_feature_groups": FEATURE_GROUPS,
         "errors": errors,
         "summaries": summaries,
         "node_reports": node_reports,
@@ -248,6 +319,7 @@ def main() -> None:
 
     print(f"Checked chunks: {len(summaries)}")
     print(f"Required columns: {len(REQUIRED_COLUMNS)}, feature columns: {len(columns)}")
+    print(f"Feature groups checked: {', '.join(requested_feature_groups)}")
     if summaries:
         min_dist = min(row["min_distance_to_laser_mm"] for row in summaries)
         ellipsoid_hits = sum(row["in_laser_ellipsoid_count"] for row in summaries)

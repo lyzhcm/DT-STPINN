@@ -243,10 +243,15 @@ Validate generated trajectory-feature chunks before using them for ablations:
 ```powershell
 python scripts\check_laser_feature_dataset.py `
   --manifest data\processed\laser_features_smoke\manifest.json `
+  --feature_group E3 `
   --step 2128 `
   --node_index 24437 `
   --require_xml
 ```
+
+Use `--feature_group E1`, `E2`, or `E3` to confirm the generated manifest has
+the canonical columns needed by that ablation family; the default `all` checks
+all three groups.
 
 ## Experiment Decisions
 
