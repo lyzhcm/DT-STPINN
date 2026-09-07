@@ -197,10 +197,20 @@ def main() -> None:
     manifest_path = out_dir / "baseline_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
+    verify_cmd = [
+        sys.executable,
+        "scripts/verify_baseline_artifact.py",
+        str(out_dir),
+        "--require_commands",
+    ]
+    if args.laser_xml:
+        verify_cmd.append("--require_laser_xml")
+
     print(f"Frozen baseline: {out_dir}")
     print(f"Manifest: {manifest_path}")
     print(f"Git commit: {manifest['git']['commit']}")
     print(f"Split: train={len(train_idx)}, val={len(val_idx)}, test={len(test_idx)}")
+    print("Verify: " + subprocess.list2cmdline(verify_cmd))
 
 
 if __name__ == "__main__":

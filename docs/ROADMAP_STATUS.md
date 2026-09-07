@@ -19,7 +19,7 @@ files, logs, preprocessed tensors, and per-run artifacts remain local-only.
 
 | Priority | Item | Status | Evidence | Remaining work |
 | --- | --- | --- | --- | --- |
-| 1 | Freeze current baseline | Partially done | Local artifact `artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z` contains checkpoint, config, split, seed, git commit, and evaluation report. | Rerun the single control with the new fixed protocol, `feature_e0_baseline.yaml`, frozen split, and XML path once `para.xml` is available. |
+| 1 | Freeze current baseline | Partially done | Local artifact `artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z` contains checkpoint, config, split, seed, git commit, and evaluation report; `scripts\verify_baseline_artifact.py` verifies hashes, split counts, commands, commit, and metrics visibility. | Rerun the single control with the new fixed protocol, `feature_e0_baseline.yaml`, frozen split, and XML path, then verify the frozen artifact with `scripts\verify_baseline_artifact.py`. |
 | 1 | Fixed split and evaluation script | Done in code | `src/data/preprocessing.py`, `scripts/train.py`, `scripts/evaluate.py`, `scripts/evaluate_checkpoint.py`, and protocol wrappers accept `--split_indices`; `scripts/run_baseline_protocol.py` and `scripts/run_feature_ablation.py` now default to the frozen split and run readiness checks before training. | Use the same `split_indices.json` in every long experiment. |
 | 2 | Close z24x | Done | `results/z241_z245_summary.md`, `results/z241_z245_summary.csv`, and `results/z241_z245_decision.md`. | Do not add z246+ threshold/gate tuning unless the roadmap changes. |
 | 3 | Verify XML laser trajectory alignment | Partially done with reconstructed XML | `configs\laser_paths\5_block_fem_additive_z_scan.xml` passes readiness; `results\laser_alignment_reconstructed_xml_smoke.md` records step 2128 diagnosis and hotspot overlay smoke. | Confirm against the original full `para.xml` if available, then repeat or approve this reconstruction as the fixed process XML for long runs. |
@@ -124,7 +124,18 @@ F:\anaconda3\envs\dtstpinn\python.exe scripts\plot_laser_hotspots.py `
 
 Pass criteria: at hotspot steps, the laser position should be close to the high-temperature region, with sensible layer index, track index, scan direction, and `time_to_arrival_s` around the failure node.
 
-### 4. Rerun and freeze the single fixed E0 baseline
+### 4. Verify the currently frozen historical baseline artifact
+
+```powershell
+F:\anaconda3\envs\dtstpinn\python.exe scripts\verify_baseline_artifact.py `
+  artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z `
+  --require_commands
+```
+
+The new fixed E0 artifact should pass the same check, with `--require_laser_xml`
+added because the current protocol records the reconstructed process XML.
+
+### 5. Rerun and freeze the single fixed E0 baseline
 
 Start with a dry run:
 
@@ -142,7 +153,7 @@ F:\anaconda3\envs\dtstpinn\python.exe scripts\run_baseline_protocol.py `
 
 Remove `--dry_run` only when ready for the long run.
 
-### 5. Run fixed E0-E3 feature ablations
+### 6. Run fixed E0-E3 feature ablations
 
 ```powershell
 F:\anaconda3\envs\dtstpinn\python.exe scripts\run_feature_ablation.py `
