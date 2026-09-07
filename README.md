@@ -241,6 +241,20 @@ python scripts\plot_laser_hotspots.py `
 Validate generated trajectory-feature chunks before using them for ablations:
 
 ```powershell
+python scripts\run_laser_feature_dataset_protocol.py `
+  --vtu_dir F:\VTU `
+  --laser_xml configs\laser_paths\5_block_fem_additive_z_scan.xml `
+  --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json `
+  --output_root data\processed\laser_features_fixed `
+  --feature_group all
+```
+
+For a cheap smoke test, add `--max_steps 1 --check_max_chunks 1 --force`.
+The wrapper builds train/val/test manifests and validates each one.
+
+To inspect a single manifest manually:
+
+```powershell
 python scripts\check_laser_feature_dataset.py `
   --manifest data\processed\laser_features_smoke\manifest.json `
   --feature_group E3 `
