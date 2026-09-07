@@ -1,3 +1,5 @@
 run,date,config,experiment_name,passed,node_feature_dim,laser_feature_dim,parameters,train_samples,val_samples,train_loss,val_loss,seconds_per_batch,peak_vram_gb
 E0,2026-09-07,configs/feature_e0_baseline.yaml,smoke_feature_e0_baseline,true,12,0,201281,2,1,3924.6,229750,1.2,9.2
 E1,2026-09-07,configs/feature_e1_laser_distance.yaml,smoke_feature_e1_laser_distance,true,27,15,202241,2,1,3930.8,229910,1.2,9.3
+E2,2026-09-07,configs/feature_e2_scan_arrival.yaml,smoke_feature_e2_scan_arrival,true,37,25,202881,2,1,3923.0,229776.359375,1.2,9.3
+E3,2026-09-07,configs/feature_e3_path_phase.yaml,smoke_feature_e3_path_phase,true,47,35,203521,2,1,3922.9,229772.390625,1.2,9.4

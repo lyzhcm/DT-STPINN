@@ -1,4 +1,4 @@
-# E0/E1 Protocol Training Smoke
+# E0-E3 Protocol Training Smoke
 
 Date: 2026-09-07
 
@@ -55,6 +55,44 @@ Result: passed.
 - Seconds per batch: 1.2
 - Peak VRAM: 9.3 GB
 
+## E2 Scan-Arrival Smoke
+
+Command:
+
+```powershell
+F:\anaconda3\envs\dtstpinn\python.exe scripts\train.py --config configs\feature_e2_scan_arrival.yaml --vtu_dir F:\VTU --seed 42 --epochs 1 --experiment_name smoke_feature_e2_scan_arrival --graph_device cuda --skip_test --laser_xml configs\laser_paths\5_block_fem_additive_z_scan.xml --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json --max_train_samples 2 --max_val_samples 1 --max_test_samples 1
+```
+
+Result: passed.
+
+- Node feature dim: config=12, actual=37; using actual dataset dim
+- Laser feature dim: 25 (base 12)
+- Parameters: 202,881
+- Train loss: 3.9230e+03
+- Val loss: 2.2978e+05
+- Time: 2.6 s
+- Seconds per batch: 1.2
+- Peak VRAM: 9.3 GB
+
+## E3 Path-Phase Smoke
+
+Command:
+
+```powershell
+F:\anaconda3\envs\dtstpinn\python.exe scripts\train.py --config configs\feature_e3_path_phase.yaml --vtu_dir F:\VTU --seed 42 --epochs 1 --experiment_name smoke_feature_e3_path_phase --graph_device cuda --skip_test --laser_xml configs\laser_paths\5_block_fem_additive_z_scan.xml --split_indices artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z\split_indices.json --max_train_samples 2 --max_val_samples 1 --max_test_samples 1
+```
+
+Result: passed.
+
+- Node feature dim: config=12, actual=47; using actual dataset dim
+- Laser feature dim: 35 (base 12)
+- Parameters: 203,521
+- Train loss: 3.9229e+03
+- Val loss: 2.2977e+05
+- Time: 2.5 s
+- Seconds per batch: 1.2
+- Peak VRAM: 9.4 GB
+
 ## Interpretation
 
-The smoke runs are intentionally too small to compare model quality. Their purpose is only to verify protocol wiring. E0 uses no laser features, while E1 increases the actual node feature dimension and reaches the model without shape or device errors.
+The smoke runs are intentionally too small to compare model quality. Their purpose is only to verify protocol wiring. E0 uses no laser features; E1 adds direct laser coordinate/distance features; E2 adds scan-frame and arrival-time features; E3 adds path-phase features such as layer, track, scan direction, and progress. All four entrypoints reach training and validation without shape, split, XML, graph-device, or loss-device errors.
