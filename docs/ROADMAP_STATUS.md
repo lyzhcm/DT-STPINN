@@ -88,7 +88,10 @@ F:\anaconda3\envs\dtstpinn\python.exe scripts\check_experiment_readiness.py `
 This check should pass before launching any 50-epoch control or feature
 ablation. It is read-only, parses the candidate laser XML, compares it against
 the original `para.xml` when available, and prints the dry-run baseline and
-ablation commands.
+ablation commands. By default it also verifies the frozen baseline artifact with
+`--baseline_artifact_verify commands`; use `--baseline_artifact_verify protocol`
+for the new fixed E0 artifact after it has acceptance sidecars and recorded
+laser/split protocol arguments.
 
 ### 2. Verify XML path visibility
 
@@ -139,6 +142,24 @@ This writes `laser_alignment_report.md` next to `laser_segments.csv`,
 `laser_samples.csv`, `laser_trajectory_manifest.json`, and the optional
 `hot_nodes_*.csv` overlay. Treat the Markdown report as the first human-readable
 record for the step/node alignment decision.
+
+For a reusable CSV window around the known miss, run:
+
+```powershell
+F:\anaconda3\envs\dtstpinn\python.exe scripts\diagnose_laser_alignment.py `
+  --config configs\feature_e3_path_phase.yaml `
+  --vtu_dir F:\VTU `
+  --laser_xml configs\laser_paths\5_block_fem_additive_z_scan.xml `
+  --offset_radius_s 0 `
+  --focus_step 2128 `
+  --focus_node 24437 `
+  --focus_window_steps 8 `
+  --focus_output_csv results\laser_focus_step2128.csv
+```
+
+The focus CSV records the current laser position, current-laser distance,
+node-specific scan-line distance, `time_to_arrival_s`, arrival raw time,
+layer/track/direction, and process-gate preview values for each inspected row.
 
 ```powershell
 F:\anaconda3\envs\dtstpinn\python.exe scripts\plot_laser_hotspots.py `

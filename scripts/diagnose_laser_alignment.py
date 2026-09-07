@@ -25,6 +25,7 @@ from src.data.dataset import DEDTemporalDataset
 from src.data.preprocessing import load_or_build_split_indices
 from src.data.vtu_loader import VTULoader
 from src.graph_builder.dynamic_graph import DynamicGraph
+from src.utils.laser_path import AdditiveZScanPath
 
 
 def parse_args() -> argparse.Namespace:
@@ -69,6 +70,8 @@ def parse_args() -> argparse.Namespace:
                         help="Specific node indices to inspect against the laser path.")
     parser.add_argument("--focus_window_steps", type=int, default=8,
                         help="Inspect +/- this many steps around each focus step/node.")
+    parser.add_argument("--focus_output_csv", type=str, default=None,
+                        help="Optional CSV path for focus node/path window diagnostics.")
     parser.add_argument("--raw_time_min", type=float, default=None,
                         help="Only use frames at or after this raw VTU time for scoring.")
     parser.add_argument("--raw_time_max", type=float, default=None,
@@ -395,7 +398,8 @@ def print_focus_node_windows(graph: DynamicGraph, config: Config, *,
                              focus_nodes: list[int], focus_steps: list[int],
                              window_steps: int, base_laser: np.ndarray,
                              best_laser: np.ndarray, best_offset: float,
-                             best_scale: float) -> None:
+                             best_scale: float,
+                             focus_output_csv: str | None = None) -> None:
     if not focus_nodes and not focus_steps:
         return
 
@@ -404,7 +408,61 @@ def print_focus_node_windows(graph: DynamicGraph, config: Config, *,
     live = graph.live.cpu().numpy()
     times = graph.times.cpu()
     states = path_states(config, times, best_offset, best_scale)
+    raw_origin = float(times[0].item()) if graph.num_steps else 0.0
+    feature_path = AdditiveZScanPath.from_config(config)
     requested_step_set = set()
+    focus_rows: list[dict[str, object]] = []
+
+    def process_diag(node_xyz: np.ndarray, step_idx: int) -> dict[str, float]:
+        features, columns = feature_path.node_process_features(
+            node_xyz.reshape(1, 3),
+            float(times[step_idx].item()),
+            raw_origin=raw_origin,
+        )
+        return {name: float(value) for name, value in zip(columns, features[0].tolist())}
+
+    def add_focus_row(kind: str, node: int, step_idx: int, node_xyz: np.ndarray,
+                      state: dict[str, float], preview: dict[str, float],
+                      diag: dict[str, float]) -> None:
+        base_delta = node_xyz - base_laser[step_idx]
+        best_delta = node_xyz - best_laser[step_idx]
+        focus_rows.append({
+            "kind": kind,
+            "step": int(step_idx),
+            "raw_time": float(times[step_idx].item()),
+            "node_index": int(node),
+            "temperature_c": float(temps[step_idx, node]),
+            "live": float(live[step_idx, node]),
+            "node_x_mm": float(node_xyz[0]),
+            "node_y_mm": float(node_xyz[1]),
+            "node_z_mm": float(node_xyz[2]),
+            "laser_x_mm": float(best_laser[step_idx, 0]),
+            "laser_y_mm": float(best_laser[step_idx, 1]),
+            "laser_z_mm": float(best_laser[step_idx, 2]),
+            "base_distance_xy_mm": float(np.linalg.norm(base_delta[:2])),
+            "best_distance_xy_mm": float(np.linalg.norm(best_delta[:2])),
+            "best_distance_3d_mm": float(np.linalg.norm(best_delta)),
+            "layer": int(state["layer"]),
+            "track_program_state": int(state["track"]),
+            "track_physical_state": int(state["physical_track"]),
+            "forward_state": int(state["forward"] > 0.5),
+            "progress": float(state["progress"]),
+            "line_along_mm": diag["line_along_mm"],
+            "line_cross_mm": diag["line_cross_mm"],
+            "time_to_arrival_s": diag["time_to_arrival_s"],
+            "arrival_raw_time": diag["arrival_raw_time"],
+            "track_physical_feature": int(round(diag["track_physical"])),
+            "track_program_feature": int(round(diag["track_program"])),
+            "direction_sign": int(round(diag["direction_sign"])),
+            "in_laser_ellipsoid": int(round(diag["in_laser_ellipsoid"])),
+            "in_track_neighborhood": int(round(diag["in_track_neighborhood"])),
+            "process_gate": preview["process_gate"],
+            "target_heat": preview["target_heat"],
+            "sweep_heat": preview["sweep_heat"],
+            "exposure_integral": preview["exposure_integral"],
+            "exposure_best_dt_s": preview["exposure_best_dt"],
+            "neighbor_hot_gate": preview["neighbor_hot_gate"],
+        })
 
     for step in focus_steps:
         if step < 0 or step >= graph.num_steps:
@@ -438,7 +496,7 @@ def print_focus_node_windows(graph: DynamicGraph, config: Config, *,
 
         print(
             "\n  step raw_time node targetT live layer track phys dir prog "
-            "base_xy best_xy best_3d proc_gate tgt_heat sweep exp_int exp_dt neigh best_laser_xyz"
+            "base_xy best_xy best_3d arr_dt arr_raw line_cross proc_gate tgt_heat sweep exp_int exp_dt neigh best_laser_xyz"
         )
         rows = sorted(step_set)
         for idx in rows:
@@ -446,6 +504,8 @@ def print_focus_node_windows(graph: DynamicGraph, config: Config, *,
             base_delta = node_xyz - base_laser[idx]
             best_delta = node_xyz - best_laser[idx]
             preview = node_laser_feature_preview(graph, config, node, idx)
+            diag = process_diag(node_xyz, idx)
+            add_focus_row("focus_node", node, idx, node_xyz, state, preview, diag)
             print(
                 f"  {idx:4d} {times[idx].item():8.0f} {node:5d} "
                 f"{temps[idx, node]:7.1f} {live[idx, node]:4.0f} "
@@ -454,6 +514,9 @@ def print_focus_node_windows(graph: DynamicGraph, config: Config, *,
                 f"{np.linalg.norm(base_delta[:2]):7.3f} "
                 f"{np.linalg.norm(best_delta[:2]):7.3f} "
                 f"{np.linalg.norm(best_delta):7.3f} "
+                f"{diag['time_to_arrival_s']:7.3f} "
+                f"{diag['arrival_raw_time']:7.0f} "
+                f"{diag['line_cross_mm']:7.3f} "
                 f"{preview['process_gate']:7.3f} "
                 f"{preview['target_heat']:7.3f} "
                 f"{preview['sweep_heat']:7.3f} "
@@ -467,7 +530,7 @@ def print_focus_node_windows(graph: DynamicGraph, config: Config, *,
         rows = sorted(requested_step_set)
         print(
             "\n  step raw_time node targetT live layer track phys dir prog "
-            "base_xy best_xy best_3d proc_gate tgt_heat sweep exp_int exp_dt neigh best_laser_xyz"
+            "base_xy best_xy best_3d arr_dt arr_raw line_cross proc_gate tgt_heat sweep exp_int exp_dt neigh best_laser_xyz"
         )
         for idx in rows:
             hot_values = temps[idx].copy()
@@ -482,6 +545,8 @@ def print_focus_node_windows(graph: DynamicGraph, config: Config, *,
             best_delta = node_xyz - best_laser[idx]
             state = states[idx]
             preview = node_laser_feature_preview(graph, config, node, idx)
+            diag = process_diag(node_xyz, idx)
+            add_focus_row("focus_step_hottest", node, idx, node_xyz, state, preview, diag)
             print(
                 f"  {idx:4d} {times[idx].item():8.0f} {node:5d} "
                 f"{target_t:7.1f} {is_live:4.0f} "
@@ -490,6 +555,9 @@ def print_focus_node_windows(graph: DynamicGraph, config: Config, *,
                 f"{np.linalg.norm(base_delta[:2]):7.3f} "
                 f"{np.linalg.norm(best_delta[:2]):7.3f} "
                 f"{np.linalg.norm(best_delta):7.3f} "
+                f"{diag['time_to_arrival_s']:7.3f} "
+                f"{diag['arrival_raw_time']:7.0f} "
+                f"{diag['line_cross_mm']:7.3f} "
                 f"{preview['process_gate']:7.3f} "
                 f"{preview['target_heat']:7.3f} "
                 f"{preview['sweep_heat']:7.3f} "
@@ -498,6 +566,15 @@ def print_focus_node_windows(graph: DynamicGraph, config: Config, *,
                 f"{preview['neighbor_hot_gate']:7.3f} "
                 f"[{best_laser[idx,0]:7.3f},{best_laser[idx,1]:7.3f},{best_laser[idx,2]:5.3f}]"
             )
+
+    if focus_output_csv and focus_rows:
+        out_path = Path(focus_output_csv)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with out_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(focus_rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(focus_rows)
+        print(f"\nFocus window CSV: {out_path}")
 
 
 def gate_target_steps(
@@ -1394,6 +1471,7 @@ def main() -> None:
         best_laser=laser,
         best_offset=best_offset,
         best_scale=best_scale,
+        focus_output_csv=args.focus_output_csv,
     )
 
     print("\nSuggested YAML override:")
