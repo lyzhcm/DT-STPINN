@@ -142,6 +142,11 @@ def build_feature_command(args: argparse.Namespace, split: str) -> list[str]:
     ]
     if args.max_steps is not None:
         cmd.extend(["--max_steps", str(args.max_steps)])
+    if args.embed_coords:
+        cmd.append("--embed_coords")
+    if args.estimate_only:
+        cmd.append("--estimate_only")
+        cmd.extend(["--estimate_steps", str(args.estimate_steps)])
     return cmd
 
 
@@ -163,8 +168,9 @@ def build_check_command(args: argparse.Namespace, split: str) -> list[str]:
 
 
 def should_build(args: argparse.Namespace, split: str) -> bool:
-    manifest = split_output_dir(args, split) / "manifest.json"
-    return args.force or not manifest.exists()
+    output_name = "feature_dataset_estimate.json" if args.estimate_only else "manifest.json"
+    output_path = split_output_dir(args, split) / output_name
+    return args.force or not output_path.exists()
 
 
 def command_record(phase: str, cmd: list[str], *, split: str | None = None, status: str) -> dict[str, Any]:
@@ -181,8 +187,10 @@ def command_record(phase: str, cmd: list[str], *, split: str | None = None, stat
 def split_manifest_summary(args: argparse.Namespace, split: str) -> dict[str, Any]:
     manifest_path = split_output_dir(args, split) / "manifest.json"
     check_report_path = split_output_dir(args, split) / "feature_check_report.json"
+    estimate_path = split_output_dir(args, split) / "feature_dataset_estimate.json"
     manifest = read_json(manifest_path)
     check_report = read_json(check_report_path)
+    estimate_report = read_json(estimate_path)
     chunks = manifest.get("chunks", []) if manifest else []
     target_steps = manifest.get("target_steps", []) if manifest else []
     columns = manifest.get("columns", []) if manifest else []
@@ -193,6 +201,10 @@ def split_manifest_summary(args: argparse.Namespace, split: str) -> dict[str, An
         "check_report": str(check_report_path),
         "check_report_exists": check_report is not None,
         "check_ok": check_report.get("ok") if check_report else None,
+        "estimate_report": str(estimate_path),
+        "estimate_report_exists": estimate_report is not None,
+        "estimated_total_bytes": estimate_report.get("estimated_total_bytes") if estimate_report else None,
+        "estimated_total_seconds": estimate_report.get("estimated_total_seconds") if estimate_report else None,
         "coords_path": manifest.get("coords_path") if manifest else None,
         "coords_embedded_in_chunks": manifest.get("coords_embedded_in_chunks") if manifest else None,
         "coords_bytes": manifest.get("coords_bytes") if manifest else None,
@@ -237,6 +249,9 @@ def write_protocol_manifest(
             "feature_group": args.feature_group,
             "dtype": args.dtype,
             "max_steps": args.max_steps,
+            "embed_coords": args.embed_coords,
+            "estimate_only": args.estimate_only,
+            "estimate_steps": args.estimate_steps,
             "check_max_chunks": args.check_max_chunks,
             "node_index": args.node_index,
             "strict_reference_laser_xml": args.strict_reference_laser_xml,
@@ -279,6 +294,22 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dtype", choices=["float32", "float64"], default="float32")
     parser.add_argument(
+        "--embed_coords",
+        action="store_true",
+        help="Store coords_mm inside every chunk for legacy standalone NPZ files.",
+    )
+    parser.add_argument(
+        "--estimate_only",
+        action="store_true",
+        help="Estimate split size/time by sampling target steps instead of writing full chunks.",
+    )
+    parser.add_argument(
+        "--estimate_steps",
+        type=int,
+        default=3,
+        help="Number of target steps to sample per split when --estimate_only is set.",
+    )
+    parser.add_argument(
         "--feature_group",
         default="all",
         help="Feature group passed to check_laser_feature_dataset.py: E1, E2, E3, or all.",
@@ -298,6 +329,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--max_steps must be greater than zero.")
     if args.check_max_chunks is not None and args.check_max_chunks <= 0:
         parser.error("--check_max_chunks must be greater than zero.")
+    if args.estimate_steps <= 0:
+        parser.error("--estimate_steps must be greater than zero.")
     return args
 
 
@@ -312,6 +345,7 @@ def main() -> None:
     print(f"  Output root : {args.output_root}")
     print(f"  Splits      : {', '.join(args.splits)}")
     print(f"  Feature grp : {args.feature_group}")
+    print(f"  Estimate    : {args.estimate_only}")
     print(f"  Dry run     : {args.dry_run}")
 
     if not args.skip_preflight:
@@ -340,14 +374,18 @@ def main() -> None:
         else:
             commands.append({"phase": "build", "split": split, "status": "skipped"})
         if not args.skip_check:
-            check_cmd = build_check_command(args, split)
-            run_command(check_cmd, dry_run=args.dry_run)
-            commands.append(command_record(
-                "check",
-                check_cmd,
-                split=split,
-                status="dry_run" if args.dry_run else "ok",
-            ))
+            if args.estimate_only:
+                print("Skipping check; --estimate_only does not write chunk manifests.")
+                commands.append({"phase": "check", "split": split, "status": "skipped_estimate_only"})
+            else:
+                check_cmd = build_check_command(args, split)
+                run_command(check_cmd, dry_run=args.dry_run)
+                commands.append(command_record(
+                    "check",
+                    check_cmd,
+                    split=split,
+                    status="dry_run" if args.dry_run else "ok",
+                ))
         else:
             commands.append({"phase": "check", "split": split, "status": "skipped"})
 
