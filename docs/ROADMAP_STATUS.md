@@ -22,7 +22,7 @@ files, logs, preprocessed tensors, and per-run artifacts remain local-only.
 | 1 | Freeze current baseline | Partially done | Local artifact `artifacts\baselines\paper1_fast_50epoch_canonical_eval_20260829T185514Z` contains checkpoint, config, split, seed, git commit, and evaluation report; `scripts\verify_baseline_artifact.py` verifies hashes, split counts, commands, commit, and metrics visibility; `scripts\freeze_baseline.py` now runs artifact verification and evaluation-report acceptance verification by default after writing a baseline artifact. | Rerun the single control with the new fixed protocol, `feature_e0_baseline.yaml`, frozen split, and XML path, then let `scripts\freeze_baseline.py` verify the frozen artifact automatically. |
 | 1 | Fixed split and evaluation script | Done in code | `src/data/preprocessing.py`, `scripts/train.py`, `scripts/evaluate.py`, `scripts/evaluate_checkpoint.py`, and protocol wrappers accept `--split_indices`; `scripts/run_baseline_protocol.py` and `scripts/run_feature_ablation.py` now default to the frozen split and run readiness checks before training. | Use the same `split_indices.json` in every long experiment. |
 | 2 | Close z24x | Done | `results/z241_z245_summary.md`, `results/z241_z245_summary.csv`, and `results/z241_z245_decision.md`. | Do not add z246+ threshold/gate tuning unless the roadmap changes. |
-| 3 | Verify XML laser trajectory alignment | Partially done with reconstructed XML | `configs\laser_paths\5_block_fem_additive_z_scan.xml` passes readiness; `scripts\compare_laser_xml.py` compares XML-defined process fields against the original `para.xml`; `results\laser_alignment_reconstructed_xml_smoke.md` records step 2128 diagnosis and hotspot overlay smoke. | Restore or point to the original full `para.xml`, run `scripts\compare_laser_xml.py`, then repeat or approve this reconstruction as the fixed process XML for long runs. |
+| 3 | Verify XML laser trajectory alignment | Done with reconstructed XML protocol | `results\laser_alignment_protocol\laser_alignment_protocol_manifest.json` was generated from `F:\VTU` and `configs\laser_paths\5_block_fem_additive_z_scan.xml`; `scripts\verify_laser_alignment_protocol.py` passed with 17 focus-window rows, trajectory CSVs, hotspot overlay summary, and step 2128/node 24437 context. | Restore or point to the original full `para.xml` before final long-run approval if exact source-file provenance is required. |
 | 4 | Build trajectory feature dataset | Done in code, smoke-tested | `scripts/build_laser_feature_dataset.py` and `scripts/check_laser_feature_dataset.py` cover E1/E2/E3 columns and split-aware generation; `scripts/run_laser_feature_dataset_protocol.py` builds and validates train/val/test manifests; reconstructed-XML smoke validates train/val/test chunks; fixed node coordinates are stored once per split as `coords_mm.npy` by default, with legacy `--embed_coords` support. | Generate full train/val/test chunks from the approved XML path before long E1-E3 runs. |
 | 5 | Minimal feature ablations E0-E3 | Ready to run, E0-E3 smoke-tested | `configs/feature_e0_baseline.yaml` through `configs/feature_e3_path_phase.yaml`; `scripts/run_feature_ablation.py` supports fixed split, seed, XML, checkpoint protocol, resume, default preflight, and post-evaluation report verification; `results\e0_e3_training_smoke.md` verifies E0-E3 training entrypoints with fixed split and reconstructed XML. | Run E0 first as the only long-run control, then E1-E3 under the same protocol. |
 | 6 | Hotspot auxiliary task | Done in code | `configs/feature_e4_hotspot_aux.yaml`, model hot head support, trainer/evaluator solidus and liquidus metrics. | Run E4 only after E1-E3 confirm whether trajectory features help. |
@@ -122,7 +122,32 @@ F:\anaconda3\envs\dtstpinn\python.exe scripts\run_laser_alignment_protocol.py `
 
 This writes the trajectory CSVs, `laser_alignment_report.md`, focus-window CSV,
 hotspot overlay CSV, hotspot PNGs, plot summary CSV, and a top-level
-`laser_alignment_protocol_manifest.json` with the exact export/plot commands.
+`laser_alignment_protocol_manifest.json` with the exact export/focus/plot
+commands. The wrapper verifies the manifest by default with
+`scripts\verify_laser_alignment_protocol.py`; pass `--skip_verify` only for a
+quick exploratory run.
+
+Current protocol evidence from `results\laser_alignment_protocol`:
+
+```text
+Verifier: passed with 17/17 focus-window rows.
+Focus: step 2128, raw time 42560, node 24437.
+Node coordinate: [10.216, -9.375, 1.000] mm.
+Target temperature: 2370.95 C.
+Laser at focus step: [9.916, -10.156, 1.000] mm.
+Distance to laser at focus step: 0.837 mm.
+Nearest laser step for this node: 2132, raw time 42640.
+Nearest distance: 0.249 mm.
+time_to_arrival at focus step: 0.0684 s.
+Layer/track/direction at focus step: layer 9, program track 101, direction -Y.
+Overlay at step 2128: 3 nodes above 500 C, hottest node distance 0.837 mm.
+```
+
+Interpretation: the reconstructed trajectory is close to the high-temperature
+region, but the known failure node becomes hot before the laser's nearest
+sampled arrival. This supports using explicit lookahead/process features such
+as `time_to_arrival`, scan-line distance, layer, track, and direction in E1-E3,
+instead of adding more hand-tuned hotspot loss weights.
 
 Equivalent low-level commands:
 
