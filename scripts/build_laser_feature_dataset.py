@@ -101,6 +101,11 @@ def main() -> None:
     parser.add_argument("--steps", default=None, help="Comma-separated target step indices; overrides --split")
     parser.add_argument("--max_steps", type=int, default=None)
     parser.add_argument("--dtype", choices=["float32", "float64"], default="float32")
+    parser.add_argument(
+        "--embed_coords",
+        action="store_true",
+        help="Store coords_mm inside every chunk for legacy standalone NPZ files.",
+    )
     args = parser.parse_args()
 
     config = Config.from_yaml(args.config)
@@ -119,12 +124,17 @@ def main() -> None:
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    coords_path = out_dir / "coords_mm.npy"
+    np.save(coords_path, coords.astype(np.float32))
     manifest = {
         "config": args.config,
         "xml": args.xml,
         "vtu_dir": args.vtu_dir,
         "raw_origin": raw_origin,
         "num_nodes": int(coords.shape[0]),
+        "coords_path": str(coords_path),
+        "coords_bytes": coords_path.stat().st_size,
+        "coords_embedded_in_chunks": bool(args.embed_coords),
         "num_vtu_steps": len(raw_times),
         "split": args.split,
         "split_source": split_source,
@@ -154,14 +164,15 @@ def main() -> None:
             features = features.astype(np.float64)
         chunk_name = f"laser_features_step_{step_idx:05d}.npz"
         chunk_path = out_dir / chunk_name
-        np.savez_compressed(
-            chunk_path,
-            features=features,
-            coords_mm=coords.astype(np.float32),
-            columns=np.asarray(feature_columns),
-            target_step=np.asarray([step_idx], dtype=np.int64),
-            raw_time=np.asarray([raw_time], dtype=np.float64),
-        )
+        chunk_payload = {
+            "features": features,
+            "columns": np.asarray(feature_columns),
+            "target_step": np.asarray([step_idx], dtype=np.int64),
+            "raw_time": np.asarray([raw_time], dtype=np.float64),
+        }
+        if args.embed_coords:
+            chunk_payload["coords_mm"] = coords.astype(np.float32)
+        np.savez_compressed(chunk_path, **chunk_payload)
         manifest["chunks"].append({
             "step": int(step_idx),
             "raw_time": float(raw_time),

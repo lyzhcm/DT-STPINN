@@ -251,6 +251,10 @@ python scripts\run_laser_feature_dataset_protocol.py `
 
 For a cheap smoke test, add `--max_steps 1 --check_max_chunks 1 --force`.
 The wrapper builds train/val/test manifests and validates each one.
+By default, fixed node coordinates are written once per split as `coords_mm.npy`
+and each step chunk stores only the changing feature table. Add `--embed_coords`
+to `scripts\build_laser_feature_dataset.py` only when you need legacy standalone
+NPZ chunks with `coords_mm` repeated inside every file.
 
 To inspect a single manifest manually:
 

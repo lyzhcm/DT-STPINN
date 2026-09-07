@@ -65,6 +65,18 @@ def resolve_chunk_path(manifest_path: Path, chunk: dict[str, Any]) -> Path:
     return manifest_path.parent / chunk_path
 
 
+def resolve_manifest_path(manifest_path: Path, value: str | None) -> Path | None:
+    if not value:
+        return None
+    path = Path(str(value))
+    if path.is_absolute():
+        return path
+    candidate = Path.cwd() / path
+    if candidate.exists():
+        return candidate
+    return manifest_path.parent / path
+
+
 def validate_columns(manifest: dict[str, Any], feature_groups: list[str]) -> tuple[list[str], list[str]]:
     columns = [str(c) for c in manifest.get("columns", [])]
     missing = [name for name in REQUIRED_COLUMNS if name not in columns]
@@ -137,20 +149,34 @@ def validate_manifest_consistency(manifest: dict[str, Any], require_xml: bool) -
     if num_nodes is not None and int(num_nodes) <= 0:
         errors.append(f"num_nodes must be positive, got {num_nodes}")
 
+    if not manifest.get("coords_embedded_in_chunks", True) and not manifest.get("coords_path"):
+        errors.append("coords_path is required when coords are not embedded in chunks")
+
     if require_xml and manifest.get("xml") is None:
         errors.append("manifest xml is null; fixed roadmap expects XML-derived trajectory features")
 
     return errors
 
 
-def summarize_chunk(chunk_path: Path, expected_columns: list[str], node_index: int | None) -> tuple[dict[str, Any], dict[str, float] | None, list[str]]:
+def summarize_chunk(
+    chunk_path: Path,
+    expected_columns: list[str],
+    node_index: int | None,
+    coords_path: Path | None = None,
+) -> tuple[dict[str, Any], dict[str, float] | None, list[str]]:
     errors: list[str] = []
     with np.load(chunk_path, allow_pickle=False) as data:
         features = data["features"]
-        coords = data["coords_mm"]
+        coords = data["coords_mm"] if "coords_mm" in data.files else None
         columns = [str(c) for c in data["columns"].tolist()]
         target_step = int(data["target_step"][0])
         raw_time = float(data["raw_time"][0])
+
+    if coords is None and coords_path is not None and coords_path.exists():
+        coords = np.load(coords_path, allow_pickle=False)
+    if coords is None:
+        coords = np.empty((0, 3), dtype=np.float32)
+        errors.append("coords_mm missing from chunk and coords_path is unavailable")
 
     if columns != expected_columns:
         errors.append("chunk columns do not match manifest columns")
@@ -270,6 +296,7 @@ def main() -> None:
     errors.extend(validate_manifest_consistency(manifest, require_xml=args.require_xml))
 
     columns = [str(c) for c in manifest.get("columns", [])]
+    coords_path = resolve_manifest_path(manifest_path, manifest.get("coords_path"))
     chunks = list(manifest.get("chunks", []))
     if args.step is not None:
         chunks = [chunk for chunk in chunks if int(chunk.get("step", -1)) == args.step]
@@ -285,7 +312,12 @@ def main() -> None:
         if not chunk_path.exists():
             errors.append(f"missing chunk: {chunk_path}")
             continue
-        summary, node_features, chunk_errors = summarize_chunk(chunk_path, columns, args.node_index)
+        summary, node_features, chunk_errors = summarize_chunk(
+            chunk_path,
+            columns,
+            args.node_index,
+            coords_path=coords_path,
+        )
         summaries.append(summary)
         errors.extend(f"{chunk_path}: {err}" for err in chunk_errors)
         if node_features is not None:
@@ -303,6 +335,8 @@ def main() -> None:
         "num_manifest_chunks": len(manifest.get("chunks", [])),
         "num_checked_chunks": len(summaries),
         "num_columns": len(columns),
+        "coords_path": manifest.get("coords_path"),
+        "coords_embedded_in_chunks": manifest.get("coords_embedded_in_chunks", True),
         "required_columns": REQUIRED_COLUMNS,
         "requested_feature_groups": requested_feature_groups,
         "canonical_feature_groups": FEATURE_GROUPS,
