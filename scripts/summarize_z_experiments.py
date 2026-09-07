@@ -80,6 +80,9 @@ DEFAULT_TEST_KEYS = [
     "test/LaserRegionMaxError",
     "test/LaserRegionAbsErrorP95",
     "test/LaserRegionAbsErrorP99",
+    "test/PeakTempNumSteps",
+    "test/PeakTempMaxAbsError",
+    "test/PeakTempMeanAbsError",
     "test/worst_step",
     "test/worst_raw_time",
     "test/worst_node",
@@ -95,6 +98,42 @@ DEFAULT_TEST_KEYS = [
     "test/worst_residual_gate",
     "test/worst_residual_boost",
 ]
+
+
+ACCEPTANCE_KEY_MAP = {
+    "test/RMSE": "RMSE",
+    "test/MAE": "MAE",
+    "test/MaxError": "MaxError",
+    "test/AbsErrorP95": "AbsErrorP95",
+    "test/AbsErrorP99": "AbsErrorP99",
+    "test/TempRecallAboveSolidus": "SolidusRecall",
+    "test/TempPrecisionAboveSolidus": "SolidusPrecision",
+    "test/TempF1AboveSolidus": "SolidusF1",
+    "test/TempFPAboveSolidus": "SolidusFalseHot",
+    "test/FalseHotAboveSolidus": "SolidusFalseHot",
+    "test/TempFNAboveSolidus": "SolidusMissedHot",
+    "test/MissedHotAboveSolidus": "SolidusMissedHot",
+    "test/TempRecallAboveLiquidus": "LiquidusRecall",
+    "test/TempPrecisionAboveLiquidus": "LiquidusPrecision",
+    "test/TempF1AboveLiquidus": "LiquidusF1",
+    "test/TempFPAboveLiquidus": "LiquidusFalseHot",
+    "test/FalseHotAboveLiquidus": "LiquidusFalseHot",
+    "test/TempFNAboveLiquidus": "LiquidusMissedHot",
+    "test/MissedHotAboveLiquidus": "LiquidusMissedHot",
+    "test/LaserRegionCount": "LaserRegionCount",
+    "test/LaserRegionMAE": "LaserRegionMAE",
+    "test/LaserRegionMaxError": "LaserRegionMaxError",
+    "test/PeakTempNumSteps": "PeakTempNumSteps",
+    "test/PeakTempMaxAbsError": "PeakTempMaxAbsError",
+    "test/PeakTempMeanAbsError": "PeakTempMeanAbsError",
+    "test/worst_step": "WorstStep",
+    "test/worst_node": "WorstNode",
+    "test/worst_pred": "WorstPrediction",
+    "test/worst_target": "WorstTarget",
+    "test/worst_abs_error": "WorstAbsError",
+    "test/worst_laser_distance": "WorstLaserDistance",
+    "test/worst_time_to_arrival": "WorstTimeToArrival",
+}
 
 
 def read_latest_scalars(run_dir: Path, tags: list[str]) -> dict[str, float | int | str]:
@@ -130,6 +169,13 @@ def read_latest_scalars(run_dir: Path, tags: list[str]) -> dict[str, float | int
 
 
 def read_test_report(run_dir: Path, test_keys: list[str]) -> dict[str, float | int | str]:
+    acceptance_path = run_dir / "acceptance_summary.json"
+    acceptance = {}
+    if acceptance_path.is_file():
+        acceptance = json.loads(acceptance_path.read_text(encoding="utf-8"))
+        if not isinstance(acceptance, dict):
+            acceptance = {}
+
     report_path = run_dir / "test_metrics.json"
     report_type = "train_test_metrics"
     if not report_path.is_file():
@@ -137,9 +183,24 @@ def read_test_report(run_dir: Path, test_keys: list[str]) -> dict[str, float | i
         report_type = "checkpoint_evaluation"
     row: dict[str, float | int | str] = {key.replace("test/", "test_"): "" for key in test_keys}
     if not report_path.is_file():
+        if acceptance:
+            for key in test_keys:
+                acceptance_key = ACCEPTANCE_KEY_MAP.get(key)
+                value = acceptance.get(acceptance_key) if acceptance_key else None
+                if value is not None:
+                    row[key.replace("test/", "test_")] = value
+            row["test_report"] = ""
+            row["test_report_type"] = "acceptance_summary"
+            row["acceptance_summary"] = acceptance_path.name
+            row["split_source"] = acceptance.get("split_source", "")
+            row["split_path"] = acceptance.get("split_path", "")
+            row["split_test_count"] = acceptance.get("split_test_count", "")
         return row
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
+    if not isinstance(report, dict):
+        return row
+
     if report_type == "checkpoint_evaluation":
         nested_metrics = report.get("canonical_metrics", {})
         worst = report.get("worst_case", {})
@@ -152,6 +213,9 @@ def read_test_report(run_dir: Path, test_keys: list[str]) -> dict[str, float | i
     split_protocol = report.get("split_protocol", {}) if isinstance(report, dict) else {}
     split_test = split_protocol.get("test", {}) if isinstance(split_protocol, dict) else {}
     worst_diag = worst.get("diagnostic", {}) if isinstance(worst, dict) else {}
+    peak_summary = report.get("per_timestep_max_summary", {})
+    if not isinstance(peak_summary, dict):
+        peak_summary = {}
 
     values = {
         "test/RMSE": nested_metrics.get("RMSE"),
@@ -191,6 +255,9 @@ def read_test_report(run_dir: Path, test_keys: list[str]) -> dict[str, float | i
         "test/LaserRegionMaxError": nested_metrics.get("LaserRegionMaxError"),
         "test/LaserRegionAbsErrorP95": nested_metrics.get("LaserRegionAbsErrorP95"),
         "test/LaserRegionAbsErrorP99": nested_metrics.get("LaserRegionAbsErrorP99"),
+        "test/PeakTempNumSteps": peak_summary.get("num_steps"),
+        "test/PeakTempMaxAbsError": peak_summary.get("max_abs_error"),
+        "test/PeakTempMeanAbsError": peak_summary.get("mean_abs_error"),
         "test/worst_step": worst.get("target_step"),
         "test/worst_raw_time": worst.get("target_time_raw", worst.get("target_time")),
         "test/worst_node": worst.get("node_index"),
@@ -217,13 +284,26 @@ def read_test_report(run_dir: Path, test_keys: list[str]) -> dict[str, float | i
     }
     for key in test_keys:
         value = values.get(key)
+        acceptance_key = ACCEPTANCE_KEY_MAP.get(key)
+        if acceptance_key and acceptance.get(acceptance_key) is not None:
+            value = acceptance[acceptance_key]
         if value is not None:
             row[key.replace("test/", "test_")] = value
     row["test_report"] = report_path.name
     row["test_report_type"] = report_type
+    row["acceptance_summary"] = acceptance_path.name if acceptance else ""
     row["split_source"] = split_protocol.get("source", "") if isinstance(split_protocol, dict) else ""
     row["split_path"] = split_protocol.get("path", "") if isinstance(split_protocol, dict) else ""
     row["split_test_count"] = split_test.get("count", "") if isinstance(split_test, dict) else ""
+    if acceptance:
+        for row_key, acceptance_key in [
+            ("split_source", "split_source"),
+            ("split_path", "split_path"),
+            ("split_test_count", "split_test_count"),
+        ]:
+            value = acceptance.get(acceptance_key)
+            if value is not None:
+                row[row_key] = value
     row["split_test_first"] = split_test.get("first", "") if isinstance(split_test, dict) else ""
     row["split_test_last"] = split_test.get("last", "") if isinstance(split_test, dict) else ""
     return row
@@ -278,6 +358,7 @@ def main() -> None:
     columns.append("event_file")
     columns.append("test_report")
     columns.append("test_report_type")
+    columns.append("acceptance_summary")
     columns.append("split_source")
     columns.append("split_test_count")
     columns.append("split_test_first")
