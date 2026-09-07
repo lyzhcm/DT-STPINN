@@ -92,11 +92,6 @@ def build_train_command(args: argparse.Namespace, run_name: str) -> list[str]:
 def build_eval_command(args: argparse.Namespace, run_name: str) -> list[str]:
     checkpoint = Path(args.log_dir) / run_name / args.checkpoint_name
     output_dir = Path(args.log_dir) / run_name
-    if not args.dry_run and not checkpoint.is_file():
-        raise FileNotFoundError(
-            f"Expected baseline checkpoint at {checkpoint}. Run training first or "
-            "use --checkpoint_name for an existing checkpoint."
-        )
     cmd = [
         args.python,
         "scripts/evaluate_checkpoint.py",
@@ -277,6 +272,12 @@ def main() -> None:
     if not args.skip_train:
         run_command(train_cmd, dry_run=args.dry_run)
     if not args.skip_eval:
+        checkpoint = Path(args.log_dir) / run_name / args.checkpoint_name
+        if args.skip_train and not args.dry_run and not checkpoint.is_file():
+            raise FileNotFoundError(
+                f"Expected baseline checkpoint at {checkpoint}. Run training first or "
+                "use --checkpoint_name for an existing checkpoint."
+            )
         run_command(eval_cmd, dry_run=args.dry_run)
         if not args.skip_report_verify:
             run_command(build_report_verify_command(args, run_name), dry_run=args.dry_run)
