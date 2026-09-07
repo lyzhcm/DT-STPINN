@@ -164,6 +164,17 @@ def build_eval_command(args: argparse.Namespace, exp: Experiment, run_name: str)
     return cmd
 
 
+def build_report_verify_command(args: argparse.Namespace, run_name: str) -> list[str]:
+    cmd = [
+        args.python,
+        "scripts/verify_evaluation_report.py",
+        str(Path("logs") / run_name),
+    ]
+    if args.laser_xml:
+        cmd.append("--require_laser_context")
+    return cmd
+
+
 def build_summary_command(args: argparse.Namespace) -> list[str]:
     return [
         args.python,
@@ -221,6 +232,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--skip_train", action="store_true")
     parser.add_argument("--skip_eval", action="store_true")
+    parser.add_argument(
+        "--skip_report_verify",
+        action="store_true",
+        help="Skip post-evaluation acceptance metric verification.",
+    )
     parser.add_argument("--skip_summary", action="store_true")
     parser.add_argument("--no_preflight", action="store_true", help="Skip read-only readiness checks before running.")
     parser.add_argument("--dry_run", action="store_true")
@@ -266,6 +282,8 @@ def main() -> None:
             run_command(build_train_command(args, exp, run_name), dry_run=args.dry_run)
         if not args.skip_eval:
             run_command(build_eval_command(args, exp, run_name), dry_run=args.dry_run)
+            if not args.skip_report_verify:
+                run_command(build_report_verify_command(args, run_name), dry_run=args.dry_run)
 
     if not args.skip_summary:
         run_command(build_summary_command(args), dry_run=args.dry_run)

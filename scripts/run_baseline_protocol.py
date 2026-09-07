@@ -118,6 +118,17 @@ def build_eval_command(args: argparse.Namespace, run_name: str) -> list[str]:
     return cmd
 
 
+def build_report_verify_command(args: argparse.Namespace, run_name: str) -> list[str]:
+    cmd = [
+        args.python,
+        "scripts/verify_evaluation_report.py",
+        str(Path(args.log_dir) / run_name),
+    ]
+    if args.laser_xml:
+        cmd.append("--require_laser_context")
+    return cmd
+
+
 def build_freeze_command(
         args: argparse.Namespace,
         run_name: str,
@@ -196,6 +207,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip_train", action="store_true")
     parser.add_argument("--skip_eval", action="store_true")
     parser.add_argument("--skip_freeze", action="store_true")
+    parser.add_argument(
+        "--skip_report_verify",
+        action="store_true",
+        help="Skip post-evaluation acceptance metric verification.",
+    )
     parser.add_argument("--dry_run", action="store_true")
     parser.add_argument("--no_preflight", action="store_true", help="Skip read-only readiness checks before running.")
     parser.add_argument("--notes", default="Fixed 50-epoch baseline protocol run.")
@@ -244,6 +260,8 @@ def main() -> None:
         run_command(train_cmd, dry_run=args.dry_run)
     if not args.skip_eval:
         run_command(eval_cmd, dry_run=args.dry_run)
+        if not args.skip_report_verify:
+            run_command(build_report_verify_command(args, run_name), dry_run=args.dry_run)
     if not args.skip_freeze:
         freeze_cmd = build_freeze_command(args, run_name, train_cmd, eval_cmd)
         run_command(freeze_cmd, dry_run=args.dry_run)

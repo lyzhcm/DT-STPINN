@@ -24,10 +24,10 @@ files, logs, preprocessed tensors, and per-run artifacts remain local-only.
 | 2 | Close z24x | Done | `results/z241_z245_summary.md`, `results/z241_z245_summary.csv`, and `results/z241_z245_decision.md`. | Do not add z246+ threshold/gate tuning unless the roadmap changes. |
 | 3 | Verify XML laser trajectory alignment | Partially done with reconstructed XML | `configs\laser_paths\5_block_fem_additive_z_scan.xml` passes readiness; `results\laser_alignment_reconstructed_xml_smoke.md` records step 2128 diagnosis and hotspot overlay smoke. | Confirm against the original full `para.xml` if available, then repeat or approve this reconstruction as the fixed process XML for long runs. |
 | 4 | Build trajectory feature dataset | Done in code, smoke-tested | `scripts/build_laser_feature_dataset.py` and `scripts/check_laser_feature_dataset.py` cover E1/E2/E3 columns and split-aware generation; reconstructed-XML smoke for steps 2128/2129 validates OK. | Generate full train/val/test chunks from the approved XML path before long E1-E3 runs. |
-| 5 | Minimal feature ablations E0-E3 | Ready to run, E0-E3 smoke-tested | `configs/feature_e0_baseline.yaml` through `configs/feature_e3_path_phase.yaml`; `scripts/run_feature_ablation.py` supports fixed split, seed, XML, checkpoint protocol, resume, and default preflight; `results\e0_e3_training_smoke.md` verifies E0-E3 training entrypoints with fixed split and reconstructed XML. | Run E0 first as the only long-run control, then E1-E3 under the same protocol. |
+| 5 | Minimal feature ablations E0-E3 | Ready to run, E0-E3 smoke-tested | `configs/feature_e0_baseline.yaml` through `configs/feature_e3_path_phase.yaml`; `scripts/run_feature_ablation.py` supports fixed split, seed, XML, checkpoint protocol, resume, default preflight, and post-evaluation report verification; `results\e0_e3_training_smoke.md` verifies E0-E3 training entrypoints with fixed split and reconstructed XML. | Run E0 first as the only long-run control, then E1-E3 under the same protocol. |
 | 6 | Hotspot auxiliary task | Done in code | `configs/feature_e4_hotspot_aux.yaml`, model hot head support, trainer/evaluator solidus and liquidus metrics. | Run E4 only after E1-E3 confirm whether trajectory features help. |
 | 7 | Conditional high-temperature residual head | Done in code | `configs/feature_e5_hotspot_residual.yaml`; `src/model.py` supports `T_pred = T_base + P_hot * delta_hot` via hotspot gate mix. | Run E5 after E4 under the same protocol. |
-| 8 | Acceptance metrics | Done in code | `scripts/evaluate_checkpoint.py` reports global metrics, threshold metrics, laser-region metrics, per-step peak errors, and worst-point diagnostics. | Require these metrics in every reported comparison. |
+| 8 | Acceptance metrics | Done in code and guarded | `scripts/evaluate_checkpoint.py` reports global metrics, threshold metrics, laser-region metrics, per-step peak errors, and worst-point diagnostics; `scripts/verify_evaluation_report.py` checks that each report contains the fixed comparison fields and worst-point laser context; fixed baseline and feature-ablation wrappers run this verifier after evaluation. | Run the verifier before manually summarizing any externally generated report. |
 | 9 | Continue/stop criteria | Documented | `README.md` experiment decisions and this status file. | Apply the criteria after fixed E0-E3 results exist. |
 
 ## Current Baseline Evidence
@@ -135,7 +135,20 @@ F:\anaconda3\envs\dtstpinn\python.exe scripts\verify_baseline_artifact.py `
 The new fixed E0 artifact should pass the same check, with `--require_laser_xml`
 added because the current protocol records the reconstructed process XML.
 
-### 5. Rerun and freeze the single fixed E0 baseline
+### 5. Verify each evaluation report before comparison
+
+```powershell
+F:\anaconda3\envs\dtstpinn\python.exe scripts\verify_evaluation_report.py `
+  logs\<run_name> `
+  --require_laser_context
+```
+
+Pass criteria: the report must contain global RMSE/MAE/P95/P99/MaxError,
+solidus and liquidus Precision/Recall/F1, laser-region MAE/MaxError,
+per-timestep peak-temperature errors, and worst-case rows with laser distance or
+arrival context.
+
+### 6. Rerun and freeze the single fixed E0 baseline
 
 Start with a dry run:
 
@@ -153,7 +166,7 @@ F:\anaconda3\envs\dtstpinn\python.exe scripts\run_baseline_protocol.py `
 
 Remove `--dry_run` only when ready for the long run.
 
-### 6. Run fixed E0-E3 feature ablations
+### 7. Run fixed E0-E3 feature ablations
 
 ```powershell
 F:\anaconda3\envs\dtstpinn\python.exe scripts\run_feature_ablation.py `
