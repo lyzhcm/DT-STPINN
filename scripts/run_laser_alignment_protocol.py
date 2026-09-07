@@ -218,6 +218,16 @@ def build_focus_command(args: argparse.Namespace, output_csv: Path) -> list[str]
     return cmd
 
 
+def build_verify_command(args: argparse.Namespace, manifest_path: Path) -> list[str]:
+    return [
+        args.python,
+        "scripts/verify_laser_alignment_protocol.py",
+        str(manifest_path),
+        "--min_focus_rows",
+        str(max(1, args.focus_window_steps * 2 + 1)),
+    ]
+
+
 def command_record(phase: str, cmd: list[str], status: str) -> dict[str, str]:
     return {"phase": phase, "command": display_command(cmd), "status": status}
 
@@ -315,6 +325,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip_export", action="store_true")
     parser.add_argument("--skip_focus", action="store_true")
     parser.add_argument("--skip_plot", action="store_true")
+    parser.add_argument("--skip_verify", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
     args = parser.parse_args()
     if args.focus_step < 0:
@@ -377,6 +388,8 @@ def main() -> None:
     else:
         manifest_path = write_manifest(args, plot_steps, commands, export_dir, focus_csv, plot_dir)
         print(f"\nProtocol manifest: {manifest_path}")
+        if not args.skip_verify:
+            run_command(build_verify_command(args, manifest_path), dry_run=False)
     print("Laser alignment protocol complete.")
 
 
