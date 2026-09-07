@@ -104,6 +104,25 @@ To require a hard original-vs-reconstructed XML match before long runs, add
 
 ### 3. Export and check trajectory alignment at the known worst point
 
+Preferred one-command protocol:
+
+```powershell
+F:\anaconda3\envs\dtstpinn\python.exe scripts\run_laser_alignment_protocol.py `
+  --vtu_dir F:\VTU `
+  --laser_xml configs\laser_paths\5_block_fem_additive_z_scan.xml `
+  --output_root results\laser_alignment_protocol `
+  --focus_step 2128 `
+  --focus_node 24437 `
+  --plot_steps 2128 `
+  --show_all_nodes
+```
+
+This writes the trajectory CSVs, `laser_alignment_report.md`, hotspot overlay
+CSV, hotspot PNGs, plot summary CSV, and a top-level
+`laser_alignment_protocol_manifest.json` with the exact export/plot commands.
+
+Equivalent low-level commands:
+
 ```powershell
 F:\anaconda3\envs\dtstpinn\python.exe scripts\export_laser_trajectory.py `
   --config configs\feature_e3_path_phase.yaml `
