@@ -5,6 +5,8 @@ import argparse
 import json
 import re
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
@@ -86,6 +88,127 @@ def make_path(args, config: Config) -> AdditiveZScanPath:
     return AdditiveZScanPath.from_config(config)
 
 
+def pick_estimate_steps(steps: list[int], count: int) -> list[int]:
+    if count >= len(steps):
+        return steps
+    if count <= 1:
+        return [steps[0]]
+    indices = np.linspace(0, len(steps) - 1, count)
+    return [steps[int(round(i))] for i in indices]
+
+
+def cast_features(features: np.ndarray, dtype: str) -> np.ndarray:
+    if dtype == "float64":
+        return features.astype(np.float64)
+    return features.astype(np.float32, copy=False)
+
+
+def build_chunk_payload(
+    features: np.ndarray,
+    feature_columns: list[str],
+    step_idx: int,
+    raw_time: float,
+    coords: np.ndarray,
+    embed_coords: bool,
+) -> dict[str, np.ndarray]:
+    payload = {
+        "features": features,
+        "columns": np.asarray(feature_columns),
+        "target_step": np.asarray([step_idx], dtype=np.int64),
+        "raw_time": np.asarray([raw_time], dtype=np.float64),
+    }
+    if embed_coords:
+        payload["coords_mm"] = coords.astype(np.float32)
+    return payload
+
+
+def estimate_dataset(
+    args: argparse.Namespace,
+    path: AdditiveZScanPath,
+    coords: np.ndarray,
+    raw_times: list[float],
+    raw_origin: float,
+    steps: list[int],
+    split_source: str,
+) -> None:
+    sample_steps = pick_estimate_steps(steps, min(args.estimate_steps, len(steps)))
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rows = []
+    with tempfile.TemporaryDirectory(prefix="laser_feature_estimate_") as tmp:
+        tmp_dir = Path(tmp)
+        coords_path = tmp_dir / "coords_mm.npy"
+        np.save(coords_path, coords.astype(np.float32))
+        coords_bytes = coords_path.stat().st_size
+        for n, step_idx in enumerate(sample_steps, start=1):
+            raw_time = raw_times[step_idx]
+            t0 = time.perf_counter()
+            features, feature_columns = path.node_process_features(coords, raw_time, raw_origin=raw_origin)
+            feature_seconds = time.perf_counter() - t0
+            features = cast_features(features, args.dtype)
+            chunk_path = tmp_dir / f"laser_features_step_{step_idx:05d}.npz"
+            t1 = time.perf_counter()
+            np.savez_compressed(
+                chunk_path,
+                **build_chunk_payload(
+                    features,
+                    feature_columns,
+                    step_idx,
+                    raw_time,
+                    coords,
+                    args.embed_coords,
+                ),
+            )
+            write_seconds = time.perf_counter() - t1
+            chunk_bytes = chunk_path.stat().st_size
+            rows.append({
+                "step": int(step_idx),
+                "raw_time": float(raw_time),
+                "feature_seconds": feature_seconds,
+                "write_seconds": write_seconds,
+                "chunk_bytes": chunk_bytes,
+            })
+            print(
+                f"[{n}/{len(sample_steps)}] estimate step={step_idx} "
+                f"chunk={chunk_bytes / 1024 / 1024:.2f} MiB "
+                f"feature={feature_seconds:.3f}s write={write_seconds:.3f}s"
+            )
+
+    avg_chunk_bytes = float(np.mean([row["chunk_bytes"] for row in rows])) if rows else 0.0
+    avg_seconds = float(np.mean([row["feature_seconds"] + row["write_seconds"] for row in rows])) if rows else 0.0
+    estimated_bytes = avg_chunk_bytes * len(steps) + coords_bytes
+    estimated_seconds = avg_seconds * len(steps)
+    report = {
+        "mode": "estimate_only",
+        "config": args.config,
+        "xml": args.xml,
+        "vtu_dir": args.vtu_dir,
+        "output_dir": args.output_dir,
+        "split": args.split,
+        "split_source": split_source,
+        "num_nodes": int(coords.shape[0]),
+        "num_target_steps": len(steps),
+        "sample_steps": sample_steps,
+        "dtype": args.dtype,
+        "coords_embedded_in_chunks": bool(args.embed_coords),
+        "coords_bytes": coords_bytes,
+        "avg_chunk_bytes": avg_chunk_bytes,
+        "estimated_total_bytes": estimated_bytes,
+        "avg_seconds_per_step": avg_seconds,
+        "estimated_total_seconds": estimated_seconds,
+        "samples": rows,
+    }
+    report_path = out_dir / "feature_dataset_estimate.json"
+    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print("Estimate complete:")
+    print(f"  Target steps: {len(steps)}")
+    print(f"  Avg chunk: {avg_chunk_bytes / 1024 / 1024:.2f} MiB")
+    print(f"  Estimated total: {estimated_bytes / 1024 / 1024 / 1024:.2f} GiB")
+    print(f"  Avg time/step: {avg_seconds:.2f} s")
+    print(f"  Estimated total time: {estimated_seconds / 3600:.2f} h")
+    print(f"Estimate report: {report_path}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build laser trajectory feature NPZ chunks")
     parser.add_argument("--config", default="configs/paper1_fast.yaml")
@@ -106,7 +229,20 @@ def main() -> None:
         action="store_true",
         help="Store coords_mm inside every chunk for legacy standalone NPZ files.",
     )
+    parser.add_argument(
+        "--estimate_only",
+        action="store_true",
+        help="Sample a few target steps and estimate full split size/time without writing chunks.",
+    )
+    parser.add_argument(
+        "--estimate_steps",
+        type=int,
+        default=3,
+        help="Number of evenly spaced target steps to sample for --estimate_only.",
+    )
     args = parser.parse_args()
+    if args.estimate_steps <= 0:
+        parser.error("--estimate_steps must be greater than zero.")
 
     config = Config.from_yaml(args.config)
     loader = VTULoader(args.vtu_dir)
@@ -121,6 +257,12 @@ def main() -> None:
     steps, split_source = select_steps(config, raw_times, args.split, args.steps, args.split_indices)
     if args.max_steps is not None:
         steps = steps[:args.max_steps]
+    if not steps:
+        raise SystemExit("No target steps selected.")
+
+    if args.estimate_only:
+        estimate_dataset(args, path, coords, raw_times, raw_origin, steps, split_source)
+        return
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -160,18 +302,17 @@ def main() -> None:
         ellipsoid_count = int(features[:, column_index["in_laser_ellipsoid"]].sum())
         track_neighborhood_count = int(features[:, column_index["in_track_neighborhood"]].sum())
         min_laser_distance_mm = float(features[:, column_index["distance_to_laser_mm"]].min())
-        if args.dtype == "float64":
-            features = features.astype(np.float64)
+        features = cast_features(features, args.dtype)
         chunk_name = f"laser_features_step_{step_idx:05d}.npz"
         chunk_path = out_dir / chunk_name
-        chunk_payload = {
-            "features": features,
-            "columns": np.asarray(feature_columns),
-            "target_step": np.asarray([step_idx], dtype=np.int64),
-            "raw_time": np.asarray([raw_time], dtype=np.float64),
-        }
-        if args.embed_coords:
-            chunk_payload["coords_mm"] = coords.astype(np.float32)
+        chunk_payload = build_chunk_payload(
+            features,
+            feature_columns,
+            step_idx,
+            raw_time,
+            coords,
+            args.embed_coords,
+        )
         np.savez_compressed(chunk_path, **chunk_payload)
         manifest["chunks"].append({
             "step": int(step_idx),
