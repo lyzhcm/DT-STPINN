@@ -1,7 +1,8 @@
 """Apply the fixed continue/stop criteria to E0-E3 feature ablations.
 
-This script reads canonical ``evaluation_report.json`` files and turns the
-roadmap rules into a repeatable decision:
+This script reads canonical ``evaluation_report.json`` files, using
+``acceptance_summary.json`` sidecars when available, and turns the roadmap rules
+into a repeatable decision:
 
 * If E1/E2 do not improve solidus recall, re-check laser trajectory alignment.
 * If recall improves but RMSE regresses strongly, tune threshold/sampling/head
@@ -45,12 +46,39 @@ METRIC_KEYS = (
     "LaserRegionMaxError",
 )
 
+ACCEPTANCE_METRIC_MAP = {
+    "RMSE": "RMSE",
+    "MAE": "MAE",
+    "AbsErrorP95": "AbsErrorP95",
+    "AbsErrorP99": "AbsErrorP99",
+    "MaxError": "MaxError",
+    "TempRecallAboveSolidus": "SolidusRecall",
+    "TempPrecisionAboveSolidus": "SolidusPrecision",
+    "TempF1AboveSolidus": "SolidusF1",
+    "TempFPAboveSolidus": "SolidusFalseHot",
+    "TempFNAboveSolidus": "SolidusMissedHot",
+    "TempRecallAboveLiquidus": "LiquidusRecall",
+    "TempPrecisionAboveLiquidus": "LiquidusPrecision",
+    "TempF1AboveLiquidus": "LiquidusF1",
+    "LaserRegionMAE": "LaserRegionMAE",
+    "LaserRegionMaxError": "LaserRegionMaxError",
+}
+
+ACCEPTANCE_WORST_MAP = {
+    "target_step": "WorstStep",
+    "node_index": "WorstNode",
+    "prediction": "WorstPrediction",
+    "target": "WorstTarget",
+    "abs_error": "WorstAbsError",
+}
+
 
 @dataclass(frozen=True)
 class RunResult:
     key: str
     run_name: str
     report_path: Path
+    acceptance_path: Path | None
     metrics: dict[str, float]
     worst: dict[str, Any]
 
@@ -82,24 +110,66 @@ def canonical_metrics(report: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def load_run(logs_dir: Path, key: str, run_name: str) -> RunResult | None:
-    report_path = logs_dir / run_name / "evaluation_report.json"
-    if not report_path.is_file():
-        return None
-    report = load_json(report_path)
+def load_acceptance_summary(run_dir: Path) -> tuple[Path | None, dict[str, Any]]:
+    path = run_dir / "acceptance_summary.json"
+    if not path.is_file():
+        return None, {}
+    payload = load_json(path)
+    return path, payload
+
+
+def metrics_from_report(report: dict[str, Any]) -> dict[str, float]:
     raw_metrics = canonical_metrics(report)
-    metrics = {
+    return {
         name: value
         for name in METRIC_KEYS
         if (value := finite_float(raw_metrics.get(name))) is not None
     }
+
+
+def merge_acceptance_metrics(metrics: dict[str, float], acceptance: dict[str, Any]) -> None:
+    for metric_key, acceptance_key in ACCEPTANCE_METRIC_MAP.items():
+        value = finite_float(acceptance.get(acceptance_key))
+        if value is not None:
+            metrics[metric_key] = value
+
+
+def worst_from_report(report: dict[str, Any]) -> dict[str, Any]:
     worst = report.get("worst_case")
     if not isinstance(worst, dict) and isinstance(report.get("worst_cases_top10"), list):
         first = report["worst_cases_top10"][0] if report["worst_cases_top10"] else {}
         worst = first if isinstance(first, dict) else {}
-    if not isinstance(worst, dict):
-        worst = {}
-    return RunResult(key=key, run_name=run_name, report_path=report_path, metrics=metrics, worst=worst)
+    return worst if isinstance(worst, dict) else {}
+
+
+def merge_acceptance_worst(worst: dict[str, Any], acceptance: dict[str, Any]) -> None:
+    for worst_key, acceptance_key in ACCEPTANCE_WORST_MAP.items():
+        value = acceptance.get(acceptance_key)
+        if value is not None:
+            worst[worst_key] = value
+
+
+def load_run(logs_dir: Path, key: str, run_name: str) -> RunResult | None:
+    run_dir = logs_dir / run_name
+    report_path = run_dir / "evaluation_report.json"
+    acceptance_path, acceptance = load_acceptance_summary(run_dir)
+    if not report_path.is_file() and acceptance_path is None:
+        return None
+    report = load_json(report_path) if report_path.is_file() else {}
+    metrics = metrics_from_report(report)
+    worst = worst_from_report(report)
+    merge_acceptance_metrics(metrics, acceptance)
+    merge_acceptance_worst(worst, acceptance)
+    source_path = report_path if report_path.is_file() else acceptance_path
+    assert source_path is not None
+    return RunResult(
+        key=key,
+        run_name=run_name,
+        report_path=source_path,
+        acceptance_path=acceptance_path,
+        metrics=metrics,
+        worst=worst,
+    )
 
 
 def pct_change(value: float | None, base: float | None) -> float | None:
@@ -147,6 +217,7 @@ def row_for(run: RunResult, baseline: RunResult | None) -> dict[str, Any]:
         "WorstTarget": run.worst.get("target"),
         "WorstAbsError": run.worst.get("abs_error"),
         "report": str(run.report_path),
+        "acceptance_summary": str(run.acceptance_path) if run.acceptance_path else "",
     }
     if baseline is not None and run.key != baseline.key:
         row["RecallGainVsE0"] = None
