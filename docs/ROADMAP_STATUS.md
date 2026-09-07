@@ -28,7 +28,7 @@ files, logs, preprocessed tensors, and per-run artifacts remain local-only.
 | 6 | Hotspot auxiliary task | Done in code | `configs/feature_e4_hotspot_aux.yaml`, model hot head support, trainer/evaluator solidus and liquidus metrics. | Run E4 only after E1-E3 confirm whether trajectory features help. |
 | 7 | Conditional high-temperature residual head | Done in code | `configs/feature_e5_hotspot_residual.yaml`; `src/model.py` supports `T_pred = T_base + P_hot * delta_hot` via hotspot gate mix. | Run E5 after E4 under the same protocol. |
 | 8 | Acceptance metrics | Done in code and guarded | `scripts/evaluate_checkpoint.py` reports global metrics, threshold metrics, laser-region metrics, per-step peak errors, and worst-point diagnostics; `scripts/verify_evaluation_report.py` checks that each report contains the fixed comparison fields and worst-point laser context; fixed baseline and feature-ablation wrappers run this verifier after evaluation. | Run the verifier before manually summarizing any externally generated report. |
-| 9 | Continue/stop criteria | Documented | `README.md` experiment decisions and this status file. | Apply the criteria after fixed E0-E3 results exist. |
+| 9 | Continue/stop criteria | Documented and scripted | `README.md` experiment decisions, this status file, and `scripts/decide_feature_ablation.py`; `scripts/run_feature_ablation.py` runs the decision gate after E0-E3 by default. | Apply the generated decision after fixed E0-E3 results exist. |
 
 ## Current Baseline Evidence
 
@@ -180,3 +180,18 @@ F:\anaconda3\envs\dtstpinn\python.exe scripts\run_feature_ablation.py `
 ```
 
 Only proceed to E4/E5 after E1/E2/E3 show whether trajectory features improve hotspot recall and worst-case errors.
+
+The wrapper runs the decision gate automatically when E0, E1, and E2 are part
+of the selected experiments. To run it manually:
+
+```powershell
+F:\anaconda3\envs\dtstpinn\python.exe scripts\decide_feature_ablation.py `
+  --logs_dir logs `
+  --experiments E0 E1 E2 E3 `
+  --output_csv results\feature_ablation_decision.csv `
+  --output_md results\feature_ablation_decision.md
+```
+
+Default decision thresholds are `--min_recall_gain 0.02` and
+`--max_rmse_regression_pct 0.25`; adjust them only when the acceptance policy
+changes, not per-run.

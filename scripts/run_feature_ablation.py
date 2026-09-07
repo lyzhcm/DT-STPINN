@@ -190,6 +190,27 @@ def build_summary_command(args: argparse.Namespace) -> list[str]:
     ]
 
 
+def build_decision_command(args: argparse.Namespace) -> list[str]:
+    decision_experiments = [key for key in args.experiments if key.upper() in {"E0", "E1", "E2", "E3"}]
+    cmd = [
+        args.python,
+        "scripts/decide_feature_ablation.py",
+        "--logs_dir",
+        "logs",
+        "--experiments",
+        *decision_experiments,
+        "--output_csv",
+        args.decision_csv,
+        "--output_md",
+        args.decision_md,
+        "--min_recall_gain",
+        str(args.min_recall_gain),
+        "--max_rmse_regression_pct",
+        str(args.max_rmse_regression_pct),
+    ]
+    return cmd
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -238,11 +259,16 @@ def parse_args() -> argparse.Namespace:
         help="Skip post-evaluation acceptance metric verification.",
     )
     parser.add_argument("--skip_summary", action="store_true")
+    parser.add_argument("--skip_decision", action="store_true")
     parser.add_argument("--no_preflight", action="store_true", help="Skip read-only readiness checks before running.")
     parser.add_argument("--dry_run", action="store_true")
     parser.add_argument("--summary_pattern", default="feature_e*")
     parser.add_argument("--output_csv", default="results/feature_ablation_summary.csv")
     parser.add_argument("--output_md", default="results/feature_ablation_summary.md")
+    parser.add_argument("--decision_csv", default="results/feature_ablation_decision.csv")
+    parser.add_argument("--decision_md", default="results/feature_ablation_decision.md")
+    parser.add_argument("--min_recall_gain", type=float, default=0.02)
+    parser.add_argument("--max_rmse_regression_pct", type=float, default=0.25)
     args = parser.parse_args()
 
     if args.epochs <= 0:
@@ -287,6 +313,10 @@ def main() -> None:
 
     if not args.skip_summary:
         run_command(build_summary_command(args), dry_run=args.dry_run)
+
+    decision_experiments = {key.upper() for key in args.experiments}
+    if not args.skip_decision and {"E0", "E1", "E2"}.issubset(decision_experiments):
+        run_command(build_decision_command(args), dry_run=args.dry_run)
 
     print("\nFeature ablation protocol complete.")
 
