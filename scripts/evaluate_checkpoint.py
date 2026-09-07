@@ -22,6 +22,7 @@ Outputs:
 from __future__ import annotations
 
 import argparse
+import csv
 import gc
 import hashlib
 import json
@@ -1141,6 +1142,140 @@ def export_worst_vtu(records: list[dict], worst: dict, graph, output_dir: str):
     print(f"  VTU files saved to {output_dir}/{base}_*.vtu")
 
 
+def first_present(source: dict, *keys: str):
+    """Return the first non-None value from a dict."""
+    for key in keys:
+        value = source.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def fallback(value, backup):
+    """Keep numeric zero as a valid value while allowing a fallback for None."""
+    return backup if value is None else value
+
+
+def build_acceptance_summary(report: dict) -> dict:
+    """Flatten the fixed roadmap acceptance metrics into one row."""
+    metrics = report.get("canonical_metrics") or report.get("global_metrics") or {}
+    det = report.get("detection_metrics") or {}
+    liquidus_det = report.get("liquidus_detection_metrics") or {}
+    laser_region = report.get("laser_region_metrics") or {}
+    peak_summary = report.get("per_timestep_max_summary") or {}
+    split_protocol = report.get("split_protocol") or {}
+    split_test = split_protocol.get("test") if isinstance(split_protocol, dict) else {}
+    worst_cases = report.get("worst_cases_top10") or []
+    worst = report.get("worst_case") or (worst_cases[0] if worst_cases else {})
+    worst_diag = worst.get("diagnostic", {}) if isinstance(worst, dict) else {}
+
+    return {
+        "config": report.get("config"),
+        "checkpoint": report.get("checkpoint"),
+        "split_source": split_protocol.get("source") if isinstance(split_protocol, dict) else None,
+        "split_path": split_protocol.get("path") if isinstance(split_protocol, dict) else None,
+        "split_test_count": split_test.get("count") if isinstance(split_test, dict) else None,
+        "solidus": report.get("solidus"),
+        "liquidus": report.get("liquidus"),
+        "RMSE": metrics.get("RMSE"),
+        "MAE": metrics.get("MAE"),
+        "AbsErrorP95": metrics.get("AbsErrorP95"),
+        "AbsErrorP99": metrics.get("AbsErrorP99"),
+        "MaxError": metrics.get("MaxError"),
+        "SolidusPrecision": fallback(first_present(metrics, "TempPrecisionAboveSolidus"), det.get("precision")),
+        "SolidusRecall": fallback(first_present(metrics, "TempRecallAboveSolidus"), det.get("recall")),
+        "SolidusF1": fallback(first_present(metrics, "TempF1AboveSolidus"), det.get("f1")),
+        "SolidusFalseHot": fallback(first_present(metrics, "FalseHotAboveSolidus", "TempFPAboveSolidus"), det.get("false_positive")),
+        "SolidusMissedHot": fallback(first_present(metrics, "MissedHotAboveSolidus", "TempFNAboveSolidus"), det.get("false_negative")),
+        "LiquidusPrecision": fallback(first_present(metrics, "TempPrecisionAboveLiquidus"), liquidus_det.get("precision")),
+        "LiquidusRecall": fallback(first_present(metrics, "TempRecallAboveLiquidus"), liquidus_det.get("recall")),
+        "LiquidusF1": fallback(first_present(metrics, "TempF1AboveLiquidus"), liquidus_det.get("f1")),
+        "LiquidusFalseHot": fallback(first_present(metrics, "FalseHotAboveLiquidus", "TempFPAboveLiquidus"), liquidus_det.get("false_positive")),
+        "LiquidusMissedHot": fallback(first_present(metrics, "MissedHotAboveLiquidus", "TempFNAboveLiquidus"), liquidus_det.get("false_negative")),
+        "LaserRegionCount": fallback(first_present(metrics, "LaserRegionCount"), laser_region.get("count")),
+        "LaserRegionMAE": fallback(first_present(metrics, "LaserRegionMAE"), laser_region.get("MAE")),
+        "LaserRegionMaxError": fallback(first_present(metrics, "LaserRegionMaxError"), laser_region.get("MaxError")),
+        "PeakTempNumSteps": peak_summary.get("num_steps"),
+        "PeakTempMaxAbsError": peak_summary.get("max_abs_error"),
+        "PeakTempMeanAbsError": peak_summary.get("mean_abs_error"),
+        "WorstStep": worst.get("target_step") if isinstance(worst, dict) else None,
+        "WorstNode": worst.get("node_index") if isinstance(worst, dict) else None,
+        "WorstPrediction": worst.get("prediction") if isinstance(worst, dict) else None,
+        "WorstTarget": worst.get("target") if isinstance(worst, dict) else None,
+        "WorstAbsError": worst.get("abs_error") if isinstance(worst, dict) else None,
+        "WorstLaserDistance": first_present(
+            worst,
+            "target_laser_distance_mm",
+            "distance_to_laser_mm",
+        ) if isinstance(worst, dict) else None,
+        "WorstTimeToArrival": first_present(
+            worst,
+            "time_to_arrival_s",
+            "target_time_to_arrival_s",
+        ) if isinstance(worst, dict) else None,
+        "WorstDiagnosticLaserDistance": worst_diag.get("target_laser_distance_mm"),
+        "WorstDiagnosticLaserPosition": worst_diag.get("target_laser_position_mm"),
+    }
+
+
+def write_single_row_csv(path: Path, row: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+        writer.writeheader()
+        writer.writerow(row)
+
+
+def write_worst_cases_csv(path: Path, worst_cases: list[dict]) -> None:
+    columns = [
+        "rank",
+        "target_step",
+        "target_time_raw",
+        "node_index",
+        "coord_mm",
+        "prediction",
+        "target",
+        "abs_error",
+        "target_laser_distance_mm",
+        "distance_to_laser_mm",
+        "time_to_arrival_s",
+        "arrival_raw_time",
+        "layer_idx",
+        "track_physical",
+        "track_program",
+        "direction_sign",
+        "in_track_neighborhood",
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
+        writer.writeheader()
+        for rank, item in enumerate(worst_cases, start=1):
+            row = dict(item)
+            row["rank"] = rank
+            if isinstance(row.get("coord_mm"), list):
+                row["coord_mm"] = json.dumps(row["coord_mm"])
+            writer.writerow(row)
+
+
+def write_acceptance_artifacts(report: dict, output_dir: str) -> None:
+    """Write compact files used for fixed experiment comparison."""
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    summary = build_acceptance_summary(report)
+    summary_json = out_dir / "acceptance_summary.json"
+    summary_csv = out_dir / "acceptance_summary.csv"
+    worst_csv = out_dir / "worst_cases_top10.csv"
+
+    summary_json.write_text(json.dumps(summary, indent=2, default=str) + "\n", encoding="utf-8")
+    write_single_row_csv(summary_csv, summary)
+    write_worst_cases_csv(worst_csv, report.get("worst_cases_top10") or [])
+
+    print(f"Acceptance summary JSON: {summary_json}")
+    print(f"Acceptance summary CSV : {summary_csv}")
+    print(f"Worst-case top10 CSV   : {worst_csv}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Temperature-binned checkpoint evaluation for DT-STPINN"
@@ -1669,6 +1804,7 @@ def main():
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, default=str)
     print(f"\nFull report saved to {report_path}")
+    write_acceptance_artifacts(report, args.output_dir)
     print("Done.")
 
 
