@@ -8,10 +8,14 @@ and immediately validates the canonical E1/E2/E3 column groups.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import shlex
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
 DEFAULT_XML = "configs\\laser_paths\\5_block_fem_additive_z_scan.xml"
@@ -32,6 +36,62 @@ def run_command(cmd: list[str], *, dry_run: bool) -> None:
     if dry_run:
         return
     subprocess.run(cmd, check=True)
+
+
+def repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def resolve_input_path(path: str | None) -> Path | None:
+    if not path:
+        return None
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return candidate
+    return repo_root() / candidate
+
+
+def sha256_file(path: Path | None) -> str | None:
+    if path is None or not path.exists() or not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def read_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    with path.open("r", encoding="utf-8") as f:
+        value = json.load(f)
+    if not isinstance(value, dict):
+        return None
+    return value
+
+
+def git_info() -> dict[str, Any]:
+    def run_git(*args: str) -> str | None:
+        try:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=repo_root(),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return None
+        return result.stdout.strip()
+
+    status = run_git("status", "--short")
+    return {
+        "commit": run_git("rev-parse", "HEAD"),
+        "branch": run_git("branch", "--show-current"),
+        "status_short": status.splitlines() if status else [],
+        "is_dirty": bool(status),
+    }
 
 
 def split_output_dir(args: argparse.Namespace, split: str) -> Path:
@@ -107,6 +167,89 @@ def should_build(args: argparse.Namespace, split: str) -> bool:
     return args.force or not manifest.exists()
 
 
+def command_record(phase: str, cmd: list[str], *, split: str | None = None, status: str) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "phase": phase,
+        "command": display_command(cmd),
+        "status": status,
+    }
+    if split is not None:
+        record["split"] = split
+    return record
+
+
+def split_manifest_summary(args: argparse.Namespace, split: str) -> dict[str, Any]:
+    manifest_path = split_output_dir(args, split) / "manifest.json"
+    check_report_path = split_output_dir(args, split) / "feature_check_report.json"
+    manifest = read_json(manifest_path)
+    check_report = read_json(check_report_path)
+    chunks = manifest.get("chunks", []) if manifest else []
+    target_steps = manifest.get("target_steps", []) if manifest else []
+    columns = manifest.get("columns", []) if manifest else []
+    summary: dict[str, Any] = {
+        "split": split,
+        "manifest": str(manifest_path),
+        "manifest_exists": manifest is not None,
+        "check_report": str(check_report_path),
+        "check_report_exists": check_report is not None,
+        "check_ok": check_report.get("ok") if check_report else None,
+        "num_chunks": len(chunks) if isinstance(chunks, list) else None,
+        "num_target_steps": len(target_steps) if isinstance(target_steps, list) else None,
+        "num_columns": len(columns) if isinstance(columns, list) else None,
+    }
+    if chunks:
+        summary["first_step"] = int(chunks[0].get("step"))
+        summary["last_step"] = int(chunks[-1].get("step"))
+    return summary
+
+
+def write_protocol_manifest(
+    args: argparse.Namespace,
+    splits: list[str],
+    commands: list[dict[str, Any]],
+) -> Path:
+    config_path = resolve_input_path(args.config)
+    laser_xml_path = resolve_input_path(args.laser_xml)
+    reference_xml_path = resolve_input_path(args.reference_laser_xml)
+    split_indices_path = resolve_input_path(args.split_indices)
+    manifest = {
+        "protocol": "laser_feature_dataset",
+        "protocol_version": 1,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "git": git_info(),
+        "inputs": {
+            "config": args.config,
+            "config_sha256": sha256_file(config_path),
+            "laser_xml": args.laser_xml,
+            "laser_xml_sha256": sha256_file(laser_xml_path),
+            "reference_laser_xml": args.reference_laser_xml,
+            "reference_laser_xml_sha256": sha256_file(reference_xml_path),
+            "split_indices": args.split_indices,
+            "split_indices_sha256": sha256_file(split_indices_path),
+            "vtu_dir": args.vtu_dir,
+        },
+        "options": {
+            "output_root": args.output_root,
+            "splits": splits,
+            "feature_group": args.feature_group,
+            "dtype": args.dtype,
+            "max_steps": args.max_steps,
+            "check_max_chunks": args.check_max_chunks,
+            "node_index": args.node_index,
+            "strict_reference_laser_xml": args.strict_reference_laser_xml,
+            "skip_preflight": args.skip_preflight,
+            "skip_build": args.skip_build,
+            "skip_check": args.skip_check,
+        },
+        "commands": commands,
+        "split_manifests": [split_manifest_summary(args, split) for split in splits],
+    }
+    output_path = Path(args.output_root) / "laser_feature_dataset_manifest.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return output_path
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/feature_e3_path_phase.yaml")
@@ -157,6 +300,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    commands: list[dict[str, Any]] = []
     print("Laser feature dataset protocol")
     print(f"  Config      : {args.config}")
     print(f"  VTU dir     : {args.vtu_dir}")
@@ -169,17 +313,46 @@ def main() -> None:
 
     if not args.skip_preflight:
         print("\nPreflight checks")
-        run_command(build_preflight_command(args), dry_run=False)
+        preflight_cmd = build_preflight_command(args)
+        run_command(preflight_cmd, dry_run=False)
+        commands.append(command_record("preflight", preflight_cmd, status="ok"))
+    else:
+        commands.append({"phase": "preflight", "status": "skipped"})
 
     for split in args.splits:
         print(f"\n=== {split} ===")
         if not args.skip_build:
             if should_build(args, split):
-                run_command(build_feature_command(args, split), dry_run=args.dry_run)
+                build_cmd = build_feature_command(args, split)
+                run_command(build_cmd, dry_run=args.dry_run)
+                commands.append(command_record(
+                    "build",
+                    build_cmd,
+                    split=split,
+                    status="dry_run" if args.dry_run else "ok",
+                ))
             else:
                 print(f"Skipping build; manifest exists: {split_output_dir(args, split) / 'manifest.json'}")
+                commands.append({"phase": "build", "split": split, "status": "skipped_existing"})
+        else:
+            commands.append({"phase": "build", "split": split, "status": "skipped"})
         if not args.skip_check:
-            run_command(build_check_command(args, split), dry_run=args.dry_run)
+            check_cmd = build_check_command(args, split)
+            run_command(check_cmd, dry_run=args.dry_run)
+            commands.append(command_record(
+                "check",
+                check_cmd,
+                split=split,
+                status="dry_run" if args.dry_run else "ok",
+            ))
+        else:
+            commands.append({"phase": "check", "split": split, "status": "skipped"})
+
+    if args.dry_run:
+        print("\nDry run complete; protocol manifest was not written.")
+    else:
+        protocol_manifest = write_protocol_manifest(args, args.splits, commands)
+        print(f"\nProtocol manifest: {protocol_manifest}")
 
     print("\nLaser feature dataset protocol complete.")
 
