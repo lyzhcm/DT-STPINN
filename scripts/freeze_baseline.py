@@ -100,6 +100,11 @@ def main() -> None:
     parser.add_argument("--notes", default="")
     parser.add_argument("--output_dir", default="artifacts/baselines")
     parser.add_argument("--skip_verify", action="store_true", help="Skip post-freeze artifact verification.")
+    parser.add_argument(
+        "--skip_report_verify",
+        action="store_true",
+        help="Skip acceptance metric verification for the frozen evaluation report.",
+    )
     args = parser.parse_args()
 
     config_path = Path(args.config)
@@ -207,14 +212,25 @@ def main() -> None:
     if args.laser_xml:
         verify_cmd.append("--require_laser_xml")
 
+    report_verify_cmd = [
+        sys.executable,
+        "scripts/verify_evaluation_report.py",
+        str(out_dir / report_path.name),
+    ]
+    if args.laser_xml:
+        report_verify_cmd.append("--require_laser_context")
+
     print(f"Frozen baseline: {out_dir}", flush=True)
     print(f"Manifest: {manifest_path}", flush=True)
     print(f"Git commit: {manifest['git']['commit']}", flush=True)
     print(f"Split: train={len(train_idx)}, val={len(val_idx)}, test={len(test_idx)}", flush=True)
     print("Verify: " + subprocess.list2cmdline(verify_cmd), flush=True)
+    print("Verify report: " + subprocess.list2cmdline(report_verify_cmd), flush=True)
     if not args.skip_verify:
         print("\nPost-freeze verification", flush=True)
         subprocess.run(verify_cmd, check=True)
+        if not args.skip_report_verify:
+            subprocess.run(report_verify_cmd, check=True)
 
 
 if __name__ == "__main__":
